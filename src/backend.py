@@ -8,7 +8,7 @@ Example:
     $ uvicorn backend:app --app-dir src --reload
 """
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, status
@@ -25,7 +25,7 @@ from connectors.memory_connector import (
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     """Open the storage for the whole life of the process, then close it."""
     memory = MemoryConnector(storage_root())
     app.state.memory = memory
