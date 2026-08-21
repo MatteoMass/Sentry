@@ -1,0 +1,84 @@
+/* Tokens and the handful of rules shared by every component. */
+
+:root {
+  --surface: #ffffff;
+  --surface-sunken: #f6f7f9;
+  --surface-hover: #eceef2;
+  --border: #e2e5ea;
+  --text: #14171c;
+  --text-muted: #6b7280;
+  --accent: #3b6ef6;
+  --accent-soft: #e6edfe;
+  --accent-text: #ffffff;
+
+  --status-to-process: #8a94a6;
+  --status-processing: #b7791f;
+  --status-processed: #2f855a;
+  --status-error: #c53030;
+
+  --radius: 6px;
+  --sidebar-width: 300px;
+
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --surface: #16181d;
+    --surface-sunken: #101216;
+    --surface-hover: #22252c;
+    --border: #2a2e37;
+    --text: #e7e9ee;
+    --text-muted: #939aa8;
+    --accent: #5b86ff;
+    --accent-soft: #1e2740;
+    --accent-text: #ffffff;
+
+    --status-to-process: #7c8496;
+    --status-processing: #d69e2e;
+    --status-processed: #48bb78;
+    --status-error: #fc8181;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--surface-sunken);
+  color: var(--text);
+  font-family:
+    "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica,
+    Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+/* A message standing in for content that is not there yet. */
+.placeholder {
+  display: grid;
+  place-content: center;
+  gap: 0.5rem;
+  height: 100%;
+  padding: 2rem;
+  text-align: center;
+  color: var(--text-muted);
+}

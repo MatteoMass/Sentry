@@ -14,8 +14,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 
-from api import folders_router, recordings_router
-from config import storage_root
+from api import folders_router, mount_frontend, recordings_router
+from config import frontend_dist, storage_root
 from connectors.memory_connector import (
     FolderAlreadyExists,
     FolderNotEmpty,
@@ -50,6 +50,12 @@ app = FastAPI(
 app.include_router(recordings_router)
 app.include_router(folders_router)
 
+
+# ------------------------------------------------------------------ frontend
+
+# The built single page application answers everything the API did not claim,
+# so it is mounted last; without a build the service is API only.
+mount_frontend(app, frontend_dist())
 
 # --------------------------------------------------------- error translation
 
