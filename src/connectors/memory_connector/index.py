@@ -1,14 +1,15 @@
 """SQLite side of the memory connector: the tabular index of recordings."""
 
 import sqlite3
-import threading
-from collections.abc import Generator, Sequence
-from contextlib import contextmanager
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Self
 
+from connectors.memory_connector.db import Database
 from connectors.memory_connector.types import (
+    ANY_FOLDER,
+    FolderFilter,
+    FolderNotFound,
     Recording,
     RecordingAlreadyExists,
     RecordingNotFound,
@@ -23,10 +24,12 @@ CREATE TABLE IF NOT EXISTS recordings (
     name        TEXT NOT NULL,
     uploaded_at TEXT NOT NULL,
     status      TEXT NOT NULL
-                CHECK (status IN ('to_process', 'processing', 'processed', 'error'))
+                CHECK (status IN ('to_process', 'processing', 'processed', 'error')),
+    folder_id   TEXT REFERENCES folders (id) ON DELETE RESTRICT
 );
 CREATE INDEX IF NOT EXISTS idx_recordings_status ON recordings (status);
 CREATE INDEX IF NOT EXISTS idx_recordings_uploaded_at ON recordings (uploaded_at);
+CREATE INDEX IF NOT EXISTS idx_recordings_folder ON recordings (folder_id);
 """
 
 
@@ -34,48 +37,24 @@ class RecordingIndex:
     """The recordings table, backed by a SQLite file.
 
     This subsystem knows nothing about blobs: it stores and queries rows only.
-    It is safe to share between threads, since SQLite runs in WAL mode and
-    every statement is serialised on an internal lock.
+    Folders it knows by id alone — the tree itself belongs to
+    :class:`FolderTree`, which must be built first, since the recordings table
+    points at the table it owns.
     """
 
-    def __init__(self, db_path: Path | str) -> None:
-        """Open the index, creating the database and the schema when missing.
+    def __init__(self, database: Database) -> None:
+        """Create the recordings schema on ``database`` when it is missing.
 
         Args:
-            db_path: Path of the SQLite file. Its parent must already exist.
+            database: Connection shared with the other tabular subsystems.
         """
-        self.db_path = Path(db_path)
-        self._lock = threading.RLock()
-        self._connection = sqlite3.connect(
-            self.db_path, check_same_thread=False, isolation_level=None
-        )
-        self._connection.row_factory = sqlite3.Row
-        self._configure()
+        self.database = database
+        self.database.executescript(_SCHEMA)
 
-    def _configure(self) -> None:
-        """Apply the connection pragmas and create the schema if needed."""
-        with self._lock:
-            self._connection.execute("PRAGMA journal_mode = WAL")
-            self._connection.execute("PRAGMA synchronous = NORMAL")
-            self._connection.execute("PRAGMA foreign_keys = ON")
-            self._connection.execute("PRAGMA busy_timeout = 5000")
-            self._connection.executescript(_SCHEMA)
-
-    @contextmanager
-    def transaction(self) -> Generator[sqlite3.Connection]:
-        """Run a block inside a write transaction, rolling back on failure.
-
-        Yields:
-            The underlying connection, inside a ``BEGIN IMMEDIATE``.
-        """
-        with self._lock:
-            self._connection.execute("BEGIN IMMEDIATE")
-            try:
-                yield self._connection
-            except BaseException:
-                self._connection.execute("ROLLBACK")
-                raise
-            self._connection.execute("COMMIT")
+    @property
+    def db_path(self) -> Path:
+        """Path of the SQLite file."""
+        return self.database.path
 
     def create(
         self,
@@ -84,6 +63,7 @@ class RecordingIndex:
         recording_id: str | None = None,
         status: RecordingStatus = "to_process",
         uploaded_at: datetime | None = None,
+        folder_id: str | None = None,
     ) -> Recording:
         """Insert a new row.
 
@@ -93,30 +73,37 @@ class RecordingIndex:
                 generated.
             status: Initial pipeline status.
             uploaded_at: Upload time. Defaults to now, in UTC.
+            folder_id: Folder to file the recording under. ``None`` leaves it
+                at the top level.
 
         Returns:
             The recording as it was stored.
 
         Raises:
             RecordingAlreadyExists: If ``recording_id`` is already in use.
+            FolderNotFound: If ``folder_id`` matches no folder.
         """
         identifier = recording_id or new_recording_id()
         validate_status(status)
         moment = (uploaded_at or datetime.now(UTC)).astimezone(UTC)
 
         try:
-            with self.transaction() as connection:
+            with self.database.transaction() as connection:
                 connection.execute(
-                    "INSERT INTO recordings (id, name, uploaded_at, status)"
-                    " VALUES (?, ?, ?, ?)",
-                    (identifier, name, moment.isoformat(), status),
+                    "INSERT INTO recordings (id, name, uploaded_at, status, folder_id)"
+                    " VALUES (?, ?, ?, ?, ?)",
+                    (identifier, name, moment.isoformat(), status, folder_id),
                 )
         except sqlite3.IntegrityError as error:
-            raise RecordingAlreadyExists(
-                f"Registrazione già esistente: {identifier!r}"
-            ) from error
+            raise _integrity_error(error, identifier, folder_id) from error
 
-        return Recording(id=identifier, name=name, uploaded_at=moment, status=status)
+        return Recording(
+            id=identifier,
+            name=name,
+            uploaded_at=moment,
+            status=status,
+            folder_id=folder_id,
+        )
 
     def get(self, recording_id: str) -> Recording:
         """Return one recording by id.
@@ -124,18 +111,18 @@ class RecordingIndex:
         Raises:
             RecordingNotFound: If no row matches ``recording_id``.
         """
-        with self._lock:
-            row = self._connection.execute(
-                "SELECT * FROM recordings WHERE id = ?", (recording_id,)
-            ).fetchone()
+        row = self.database.query_one(
+            "SELECT * FROM recordings WHERE id = ?", (recording_id,)
+        )
         if row is None:
-            raise RecordingNotFound(f"Registrazione inesistente: {recording_id!r}")
+            raise RecordingNotFound(f"No such recording: {recording_id!r}")
         return Recording.from_row(row)
 
     def search(
         self,
         *,
         status: RecordingStatus | Sequence[RecordingStatus] | None = None,
+        folder_id: FolderFilter | Sequence[str] = ANY_FOLDER,
         limit: int | None = None,
         offset: int = 0,
     ) -> list[Recording]:
@@ -143,29 +130,48 @@ class RecordingIndex:
 
         Args:
             status: Keep only these statuses. ``None`` keeps everything.
+            folder_id: Keep only what sits in this folder, in any of these
+                folders, or — with ``None`` — at the top level. Defaults to
+                :data:`ANY_FOLDER`, which keeps everything. Listing a whole
+                branch is a matter of passing the ids the tree reports for it.
             limit: Maximum number of rows to return.
             offset: Number of rows to skip.
 
         Returns:
             The matching recordings, ordered by upload time descending.
         """
-        query = "SELECT * FROM recordings"
+        clauses: list[str] = []
         parameters: list[object] = []
 
         if status is not None:
             wanted = (status,) if isinstance(status, str) else tuple(status)
             for candidate in wanted:
                 validate_status(candidate)
-            placeholders = ", ".join("?" * len(wanted))
-            query += f" WHERE status IN ({placeholders})"
+            clauses.append(f"status IN ({', '.join('?' * len(wanted))})")
             parameters.extend(wanted)
 
+        if folder_id is not ANY_FOLDER:
+            if folder_id is None:
+                clauses.append("folder_id IS NULL")
+            elif isinstance(folder_id, str):
+                clauses.append("folder_id = ?")
+                parameters.append(folder_id)
+            else:
+                folders = tuple(folder_id)
+                if not folders:
+                    return []
+                clauses.append(f"folder_id IN ({', '.join('?' * len(folders))})")
+                parameters.extend(folders)
+
+        query = "SELECT * FROM recordings"
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
         query += " ORDER BY uploaded_at DESC, id DESC LIMIT ? OFFSET ?"
         parameters.extend((limit if limit is not None else -1, offset))
 
-        with self._lock:
-            rows = self._connection.execute(query, parameters).fetchall()
-        return [Recording.from_row(row) for row in rows]
+        return [
+            Recording.from_row(row) for row in self.database.query(query, parameters)
+        ]
 
     def update_status(self, recording_id: str, status: RecordingStatus) -> Recording:
         """Move a recording to another pipeline status.
@@ -174,14 +180,57 @@ class RecordingIndex:
             RecordingNotFound: If no row matches ``recording_id``.
         """
         validate_status(status)
-        with self.transaction() as connection:
+        with self.database.transaction() as connection:
             cursor = connection.execute(
                 "UPDATE recordings SET status = ? WHERE id = ?",
                 (status, recording_id),
             )
             if cursor.rowcount == 0:
-                raise RecordingNotFound(f"Registrazione inesistente: {recording_id!r}")
+                raise RecordingNotFound(f"No such recording: {recording_id!r}")
         return self.get(recording_id)
+
+    def move(self, recording_id: str, folder_id: str | None) -> Recording:
+        """File a recording under another folder.
+
+        Only this row changes: the media stays exactly where it is on disk.
+
+        Args:
+            recording_id: Recording to move.
+            folder_id: Destination folder. ``None`` moves it to the top level.
+
+        Returns:
+            The recording as it now stands.
+
+        Raises:
+            RecordingNotFound: If no row matches ``recording_id``.
+            FolderNotFound: If ``folder_id`` matches no folder.
+        """
+        try:
+            with self.database.transaction() as connection:
+                cursor = connection.execute(
+                    "UPDATE recordings SET folder_id = ? WHERE id = ?",
+                    (folder_id, recording_id),
+                )
+        except sqlite3.IntegrityError as error:
+            raise FolderNotFound(f"No such folder: {folder_id!r}") from error
+        if cursor.rowcount == 0:
+            raise RecordingNotFound(f"No such recording: {recording_id!r}")
+        return self.get(recording_id)
+
+    def count_by_folder(self) -> dict[str | None, int]:
+        """Return how many recordings sit in each folder.
+
+        Returns:
+            A count per folder id, with ``None`` holding the top level. Empty
+            folders are absent, since the count comes from the recordings.
+        """
+        return {
+            row["folder_id"]: row["total"]
+            for row in self.database.query(
+                "SELECT folder_id, COUNT(*) AS total FROM recordings"
+                " GROUP BY folder_id"
+            )
+        }
 
     def claim_next(self) -> Recording | None:
         """Atomically take the oldest pending recording and mark it processing.
@@ -189,7 +238,7 @@ class RecordingIndex:
         Returns:
             The claimed recording, or ``None`` when nothing is pending.
         """
-        with self.transaction() as connection:
+        with self.database.transaction() as connection:
             row = connection.execute(
                 "SELECT id FROM recordings WHERE status = 'to_process'"
                 " ORDER BY uploaded_at ASC, id ASC LIMIT 1"
@@ -208,34 +257,34 @@ class RecordingIndex:
         Raises:
             RecordingNotFound: If no row matches ``recording_id``.
         """
-        with self.transaction() as connection:
+        with self.database.transaction() as connection:
             cursor = connection.execute(
                 "DELETE FROM recordings WHERE id = ?", (recording_id,)
             )
             if cursor.rowcount == 0:
-                raise RecordingNotFound(f"Registrazione inesistente: {recording_id!r}")
+                raise RecordingNotFound(f"No such recording: {recording_id!r}")
 
     def known_ids(self) -> set[str]:
         """Return the id of every indexed recording."""
-        with self._lock:
-            return {
-                row["id"]
-                for row in self._connection.execute("SELECT id FROM recordings")
-            }
+        return {row["id"] for row in self.database.query("SELECT id FROM recordings")}
 
     def close(self) -> None:
-        """Close the database connection."""
-        with self._lock:
-            self._connection.close()
-
-    def __enter__(self) -> Self:
-        """Return the index itself, for use as a context manager."""
-        return self
-
-    def __exit__(self, *exception: object) -> None:
-        """Close the database connection when leaving the block."""
-        self.close()
+        """Close the shared database connection."""
+        self.database.close()
 
     def __repr__(self) -> str:
         """Return a debug representation showing the database path."""
-        return f"{type(self).__name__}(db_path={str(self.db_path)!r})"
+        return f"{type(self).__name__}(database={self.database!r})"
+
+
+def _integrity_error(
+    error: sqlite3.IntegrityError, recording_id: str, folder_id: str | None
+) -> Exception:
+    """Tell a taken id apart from a missing folder on a failed insert.
+
+    Both arrive as the same exception, and only its message says which
+    constraint gave way.
+    """
+    if "FOREIGN KEY" in str(error).upper():
+        return FolderNotFound(f"No such folder: {folder_id!r}")
+    return RecordingAlreadyExists(f"Recording already exists: {recording_id!r}")

@@ -38,7 +38,7 @@ class RecordingBlobs:
             InvalidKey: If ``recording_id`` is not a safe folder name.
         """
         if not _ID_PATTERN.match(recording_id):
-            raise InvalidKey(f"Id non valido: {recording_id!r}")
+            raise InvalidKey(f"Invalid recording id: {recording_id!r}")
         return self.root / recording_id
 
     def ensure_dir(self, recording_id: str) -> bool:
@@ -116,7 +116,7 @@ class RecordingBlobs:
             return path.open("rb")
         except FileNotFoundError as error:
             raise BlobNotFound(
-                f"File inesistente: {recording_id!r}/{filename!r}"
+                f"No such file: {recording_id!r}/{filename!r}"
             ) from error
 
     def read_text(
@@ -132,7 +132,7 @@ class RecordingBlobs:
             return path.read_text(encoding=encoding)
         except FileNotFoundError as error:
             raise BlobNotFound(
-                f"File inesistente: {recording_id!r}/{filename!r}"
+                f"No such file: {recording_id!r}/{filename!r}"
             ) from error
 
     def write_text(
@@ -182,10 +182,10 @@ class RecordingBlobs:
         """Resolve a file name inside a recording folder, refusing escapes."""
         directory = self.dir_for(recording_id)
         if not filename or "\x00" in filename or Path(filename).is_absolute():
-            raise InvalidKey(f"Nome file non valido: {filename!r}")
+            raise InvalidKey(f"Invalid file name: {filename!r}")
         resolved = (directory / filename).resolve()
         if not resolved.is_relative_to(directory.resolve()):
-            raise InvalidKey(f"Nome file non valido: {filename!r}")
+            raise InvalidKey(f"Invalid file name: {filename!r}")
         return resolved
 
     def __repr__(self) -> str:
