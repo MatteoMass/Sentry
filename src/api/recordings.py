@@ -12,7 +12,16 @@ import re
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import (
+    APIRouter,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Response,
+    UploadFile,
+    status,
+)
 
 from api.dependencies import Memory
 from api.schemas import RecordingMove, RecordingOut, folder_ref
@@ -153,6 +162,32 @@ def move_recording(
     """
     recording = memory.move_recording(recording_id, folder_ref(payload.folder))
     return RecordingOut.from_recording(recording)
+
+
+@router.delete(
+    "/{recording_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a recording",
+)
+def delete_recording(memory: Memory, recording_id: str) -> Response:
+    """Delete a recording, media included.
+
+    Nothing of it is kept: the row goes first and the folder holding the media
+    follows, so an interrupted delete leaves files nothing points at rather
+    than an entry pointing at files that are gone.
+
+    Args:
+        memory: Storage the recording lives in.
+        recording_id: Recording to delete.
+
+    Returns:
+        An empty 204 response.
+
+    Raises:
+        HTTPException: 404 if the recording does not exist.
+    """
+    memory.delete_recording(recording_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 # ------------------------------------------------------------------- helpers

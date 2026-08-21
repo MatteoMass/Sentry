@@ -2,34 +2,134 @@
 /**
  * The left shoulder: the folder tree, and under each folder the recordings
  * filed there, by name.
+ *
+ * This is also the top level itself — a right click on its empty space, like
+ * the button in the header, adds a folder or a recording there, and a drop
+ * released outside every folder files what was dragged back out.
  */
+import { computed } from "vue";
+
+import ConfirmDialog from "@/components/ConfirmDialog.vue";
+import ContextMenu from "@/components/ContextMenu.vue";
+import FolderDraft from "@/components/FolderDraft.vue";
+import RecordingRow from "@/components/RecordingRow.vue";
 import TreeNode from "@/components/TreeNode.vue";
+import { useContextMenu } from "@/composables/useContextMenu";
+import { pickMedia } from "@/composables/useFilePicker";
 import { useLibrary } from "@/composables/useLibrary";
 
-const { tree, loading, error, recordings, selectedId, select, refresh } = useLibrary();
+const {
+  tree,
+  loading,
+  error,
+  actionError,
+  recordings,
+  dragged,
+  uploads,
+  refresh,
+  dismissError,
+  beginDraft,
+  isDrafting,
+  upload,
+  markTarget,
+  clearTarget,
+  isTarget,
+  canDropInto,
+  dropInto,
+} = useLibrary();
+const { open, openAt } = useContextMenu();
+
+const empty = computed(
+  () => !tree.value.children.length && !tree.value.recordings.length,
+);
+
+/** True while a drop released here would file the item at the top level. */
+const highlighted = computed(() => isTarget(null));
+
+/** What can be added at the top level, offered from the header and the tree. */
+function entries() {
+  return [
+    { label: "New folder", run: () => beginDraft(null) },
+    { label: "Upload recording…", run: () => void uploadHere() },
+  ];
+}
+
+/** Ask for files and store them at the top level. */
+async function uploadHere(): Promise<void> {
+  await upload(await pickMedia(), null);
+}
+
+function onContextMenu(event: MouseEvent): void {
+  open(event, entries());
+}
+
+/** The header button offers the same, hanging under itself. */
+function onAdd(event: MouseEvent): void {
+  const button = (event.currentTarget as HTMLElement).getBoundingClientRect();
+  openAt({ x: button.left, y: button.bottom + 4 }, entries());
+}
+
+/** What the sidebar says while files are on their way up. */
+const progress = computed(() =>
+  uploads.value.length === 1
+    ? `Uploading ${uploads.value[0]}…`
+    : `Uploading ${uploads.value.length} recordings…`,
+);
+
+/** The top level catches every release no folder claimed first. */
+function onDragOver(event: DragEvent): void {
+  if (dragged.value === null || !canDropInto(null)) {
+    return;
+  }
+  event.preventDefault();
+  if (event.dataTransfer !== null) {
+    event.dataTransfer.dropEffect = "move";
+  }
+  markTarget(null);
+}
+
+function onDrop(event: DragEvent): void {
+  if (dragged.value === null) {
+    return;
+  }
+  event.preventDefault();
+  void dropInto(null);
+}
 </script>
 
 <template>
   <aside class="sidebar">
     <header class="header">
       <h1 class="title">Sentry</h1>
-      <button class="refresh" :disabled="loading" title="Reload" @click="refresh">
-        {{ loading ? "…" : "↻" }}
-      </button>
+      <div class="actions">
+        <button class="action" title="Add" @click="onAdd">＋</button>
+        <button class="action" :disabled="loading" title="Reload" @click="refresh">
+          {{ loading ? "…" : "↻" }}
+        </button>
+      </div>
     </header>
+
+    <p v-if="uploads.length" class="state muted">{{ progress }}</p>
+
+    <p v-if="actionError" class="notice">
+      <span class="notice-text">{{ actionError }}</span>
+      <button class="dismiss" title="Dismiss" @click="dismissError">×</button>
+    </p>
 
     <p v-if="error" class="error">{{ error }}</p>
 
     <p v-else-if="loading && !recordings.length" class="state muted">Loading…</p>
 
-    <p
-      v-else-if="!tree.children.length && !tree.recordings.length"
-      class="state muted"
+    <nav
+      v-else
+      class="tree"
+      :class="{ 'tree--drop': highlighted }"
+      aria-label="Recordings"
+      @contextmenu="onContextMenu"
+      @dragover="onDragOver"
+      @dragleave="clearTarget(null)"
+      @drop="onDrop"
     >
-      Nothing stored yet.
-    </p>
-
-    <nav v-else class="tree" aria-label="Recordings">
       <ul class="level">
         <TreeNode
           v-for="child in tree.children"
@@ -37,18 +137,22 @@ const { tree, loading, error, recordings, selectedId, select, refresh } = useLib
           :node="child"
           :depth="0"
         />
-        <li v-for="recording in tree.recordings" :key="recording.id">
-          <button
-            class="row"
-            :class="{ 'row--selected': recording.id === selectedId }"
-            :title="recording.name"
-            @click="select(recording.id)"
-          >
-            <span class="label">{{ recording.name }}</span>
-          </button>
-        </li>
+        <FolderDraft v-if="isDrafting(null)" :depth="0" />
+        <RecordingRow
+          v-for="recording in tree.recordings"
+          :key="recording.id"
+          :recording="recording"
+          :depth="0"
+        />
       </ul>
+
+      <p v-if="empty && !isDrafting(null)" class="state muted">
+        Nothing stored yet. Right click to add a folder or a recording.
+      </p>
     </nav>
+
+    <ContextMenu />
+    <ConfirmDialog />
   </aside>
 </template>
 
@@ -81,7 +185,12 @@ const { tree, loading, error, recordings, selectedId, select, refresh } = useLib
   text-transform: uppercase;
 }
 
-.refresh {
+.actions {
+  display: flex;
+  gap: 0.3rem;
+}
+
+.action {
   padding: 0.15rem 0.45rem;
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -89,11 +198,11 @@ const { tree, loading, error, recordings, selectedId, select, refresh } = useLib
   cursor: pointer;
 }
 
-.refresh:hover:not(:disabled) {
+.action:hover:not(:disabled) {
   background: var(--surface-hover);
 }
 
-.refresh:disabled {
+.action:disabled {
   cursor: default;
   opacity: 0.6;
 }
@@ -104,39 +213,16 @@ const { tree, loading, error, recordings, selectedId, select, refresh } = useLib
   overflow: auto;
 }
 
+/* The top level lights up as a whole, having no row of its own. */
+.tree--drop {
+  border-radius: var(--radius);
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+
 .level {
   margin: 0;
   padding: 0;
   list-style: none;
-}
-
-.row {
-  display: flex;
-  width: 100%;
-  padding: 0.3rem 0.6rem 0.3rem 0.5rem;
-  border: 0;
-  border-radius: var(--radius);
-  background: none;
-  color: var(--text-muted);
-  text-align: left;
-  cursor: pointer;
-}
-
-.row:hover {
-  background: var(--surface-hover);
-}
-
-.row--selected,
-.row--selected:hover {
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-weight: 500;
-}
-
-.label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .state,
@@ -148,5 +234,30 @@ const { tree, loading, error, recordings, selectedId, select, refresh } = useLib
 
 .error {
   color: var(--status-error);
+}
+
+.notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin: 0.5rem 0.5rem 0;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--status-error);
+  border-radius: var(--radius);
+  color: var(--status-error);
+  font-size: 0.82rem;
+}
+
+.notice-text {
+  flex: 1;
+}
+
+.dismiss {
+  flex: none;
+  padding: 0 0.2rem;
+  border: 0;
+  background: none;
+  line-height: 1;
+  cursor: pointer;
 }
 </style>
