@@ -7,8 +7,8 @@ from functools import cached_property
 from google import genai
 from google.genai import types as genai_types
 
-from ai_connectors.base import GenAIConnector
-from ai_connectors.types import CompletionResponse, Message, Usage
+from connectors.genai_connectors.base import GenAIConnector
+from connectors.genai_connectors.types import CompletionResponse, Message, Usage
 
 DEFAULT_MODEL = "gemini-3.1-flash"
 

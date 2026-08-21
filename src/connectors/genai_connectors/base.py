@@ -3,7 +3,7 @@
 from abc import ABC, abstractmethod
 from collections.abc import Iterator, Sequence
 
-from ai_connectors.types import CompletionResponse, Message
+from connectors.genai_connectors.types import CompletionResponse, Message
 
 
 class GenAIConnector(ABC):
