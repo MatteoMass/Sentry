@@ -8,6 +8,8 @@ from pathlib import Path
 from connectors.memory_connector.db import Database
 from connectors.memory_connector.types import (
     ANY_FOLDER,
+    LEGACY_STATUSES,
+    RECORDING_STATUSES,
     FolderFilter,
     FolderNotFound,
     Recording,
@@ -18,15 +20,19 @@ from connectors.memory_connector.types import (
     validate_status,
 )
 
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS recordings (
+_STATUS_CHECK = ", ".join(f"'{status}'" for status in RECORDING_STATUSES)
+"""The statuses spelled as SQL, so the table cannot drift from the type."""
+
+_COLUMNS = f"""
     id          TEXT PRIMARY KEY,
     name        TEXT NOT NULL,
     uploaded_at TEXT NOT NULL,
-    status      TEXT NOT NULL
-                CHECK (status IN ('to_process', 'processing', 'processed', 'error')),
+    status      TEXT NOT NULL CHECK (status IN ({_STATUS_CHECK})),
     folder_id   TEXT REFERENCES folders (id) ON DELETE RESTRICT
-);
+"""
+
+_SCHEMA = f"""
+CREATE TABLE IF NOT EXISTS recordings ({_COLUMNS});
 CREATE INDEX IF NOT EXISTS idx_recordings_status ON recordings (status);
 CREATE INDEX IF NOT EXISTS idx_recordings_uploaded_at ON recordings (uploaded_at);
 CREATE INDEX IF NOT EXISTS idx_recordings_folder ON recordings (folder_id);
@@ -49,6 +55,7 @@ class RecordingIndex:
             database: Connection shared with the other tabular subsystems.
         """
         self.database = database
+        _migrate_statuses(database)
         self.database.executescript(_SCHEMA)
 
     @property
@@ -233,7 +240,10 @@ class RecordingIndex:
         }
 
     def claim_next(self) -> Recording | None:
-        """Atomically take the oldest pending recording and mark it processing.
+        """Atomically take the oldest pending recording and mark it running.
+
+        It is claimed as ``transcribing``, which is the step a recording still
+        in ``to_process`` has to start with.
 
         Returns:
             The claimed recording, or ``None`` when nothing is pending.
@@ -246,7 +256,7 @@ class RecordingIndex:
             if row is None:
                 return None
             connection.execute(
-                "UPDATE recordings SET status = 'processing' WHERE id = ?",
+                "UPDATE recordings SET status = 'transcribing' WHERE id = ?",
                 (row["id"],),
             )
         return self.get(row["id"])
@@ -288,3 +298,39 @@ def _integrity_error(
     if "FOREIGN KEY" in str(error).upper():
         return FolderNotFound(f"No such folder: {folder_id!r}")
     return RecordingAlreadyExists(f"Recording already exists: {recording_id!r}")
+
+
+def _migrate_statuses(database: Database) -> None:
+    """Widen an existing table to the statuses of the two step pipeline.
+
+    ``CREATE TABLE IF NOT EXISTS`` leaves a table that already exists exactly
+    as it was, ``CHECK`` constraint included, and SQLite cannot alter one; a
+    database written before the pipeline was split therefore has to be rebuilt
+    around the new column, with the statuses it holds mapped over.
+
+    The rebuild is skipped as soon as the constraint already names every
+    status, which makes this safe to run at every open.
+    """
+    table = database.query_one(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'recordings'"
+    )
+    if table is None or all(
+        f"'{status}'" in table["sql"] for status in RECORDING_STATUSES
+    ):
+        return
+
+    mapping = " ".join(
+        f"WHEN '{legacy}' THEN '{current}'"
+        for legacy, current in LEGACY_STATUSES.items()
+    )
+    with database.transaction() as connection:
+        # The old indexes follow the renamed table and go down with it; the
+        # schema script recreates them right after.
+        connection.execute("ALTER TABLE recordings RENAME TO recordings_legacy")
+        connection.execute(f"CREATE TABLE recordings ({_COLUMNS})")
+        connection.execute(
+            "INSERT INTO recordings (id, name, uploaded_at, status, folder_id)"
+            f" SELECT id, name, uploaded_at, CASE status {mapping} ELSE status END,"
+            " folder_id FROM recordings_legacy"
+        )
+        connection.execute("DROP TABLE recordings_legacy")

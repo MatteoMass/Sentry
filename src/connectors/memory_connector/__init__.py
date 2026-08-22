@@ -10,6 +10,7 @@ from connectors.memory_connector.index import RecordingIndex
 from connectors.memory_connector.types import (
     ANY_FOLDER,
     RECORDING_STATUSES,
+    RUNNING_STATUSES,
     BlobNotFound,
     Folder,
     FolderAlreadyExists,
@@ -33,6 +34,7 @@ __all__ = [
     "DB_FILENAME",
     "RECORDINGS_DIRNAME",
     "RECORDING_STATUSES",
+    "RUNNING_STATUSES",
     "BlobNotFound",
     "Database",
     "Folder",

@@ -12,7 +12,8 @@
   --accent-text: #ffffff;
 
   --status-to-process: #8a94a6;
-  --status-processing: #b7791f;
+  --status-running: #b7791f;
+  --status-transcribed: #2b6cb0;
   --status-processed: #2f855a;
   --status-error: #c53030;
   /* Legible on the error colour, which is light in the dark theme. */
@@ -37,7 +38,8 @@
     --accent-text: #ffffff;
 
     --status-to-process: #7c8496;
-    --status-processing: #d69e2e;
+    --status-running: #d69e2e;
+    --status-transcribed: #63b3ed;
     --status-processed: #48bb78;
     --status-error: #fc8181;
     --status-error-text: #16181d;

@@ -7,7 +7,7 @@
  */
 
 import { ROOT } from "@/api/types";
-import type { Folder, Recording } from "@/api/types";
+import type { Folder, Recording, Summary, Transcript } from "@/api/types";
 
 /** Raised when the backend answers with a status outside 2xx. */
 export class ApiError extends Error {
@@ -95,6 +95,72 @@ export function fetchFolders(): Promise<Folder[]> {
 /** List every recording, wherever it sits, newest first. */
 export function fetchRecordings(): Promise<Recording[]> {
   return request<Recording[]>("/recordings");
+}
+
+/** Read one recording, which is how its status is followed while it runs. */
+export function fetchRecording(recordingId: string): Promise<Recording> {
+  return request<Recording>(`/recordings/${encodeURIComponent(recordingId)}`);
+}
+
+/**
+ * Start the whole pipeline on a recording: transcript, diarization, summary.
+ *
+ * The answer comes back long before the work is done — it only says which
+ * step the recording is now in. What became of it is read from its status
+ * afterwards.
+ *
+ * With `force` the audio is transcribed again from scratch; without it a run
+ * reuses whatever the last one already managed to store, which is what makes
+ * retrying a failure cheap.
+ */
+export function processRecording(
+  recordingId: string,
+  force: boolean,
+): Promise<Recording> {
+  return request<Recording>(
+    `/recordings/${encodeURIComponent(recordingId)}/process?force=${force}`,
+    { method: "POST" },
+  );
+}
+
+/**
+ * Run the transcription alone, sending the audio again.
+ *
+ * This is the expensive half, and asking for it explicitly can only mean the
+ * stored transcript is not wanted — so it is always forced, and a summary
+ * describing the old dialogue is dropped by the backend along with it.
+ */
+export function transcribeRecording(recordingId: string): Promise<Recording> {
+  return request<Recording>(
+    `/recordings/${encodeURIComponent(recordingId)}/transcribe?force=true`,
+    { method: "POST" },
+  );
+}
+
+/**
+ * Run the summarisation alone, over the transcript already stored.
+ *
+ * This is what a failed summary is retried with: the audio never travels
+ * again, so it costs one model call. The backend turns it down with a 409
+ * when there is no transcript to read.
+ */
+export function summarizeRecording(recordingId: string): Promise<Recording> {
+  return request<Recording>(
+    `/recordings/${encodeURIComponent(recordingId)}/summarize`,
+    { method: "POST" },
+  );
+}
+
+/** Read the stored transcript, whatever became of the summary. */
+export function fetchTranscript(recordingId: string): Promise<Transcript> {
+  return request<Transcript>(
+    `/recordings/${encodeURIComponent(recordingId)}/transcript`,
+  );
+}
+
+/** Read the stored summary. */
+export function fetchSummary(recordingId: string): Promise<Summary> {
+  return request<Summary>(`/recordings/${encodeURIComponent(recordingId)}/summary`);
 }
 
 /**

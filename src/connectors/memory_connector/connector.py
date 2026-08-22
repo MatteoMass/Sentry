@@ -262,7 +262,7 @@ class MemoryConnector:
         return self.index.update_status(recording_id, status)
 
     def claim_next(self) -> Recording | None:
-        """Atomically take the oldest pending recording and mark it processing."""
+        """Atomically take the oldest pending recording and mark it running."""
         return self.index.claim_next()
 
     # --------------------------------------------------------- folder facade

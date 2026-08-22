@@ -20,12 +20,16 @@ import {
   deleteFolder,
   deleteRecording,
   fetchFolders,
+  fetchRecording,
   fetchRecordings,
   moveFolder,
   moveRecording,
+  processRecording,
+  summarizeRecording,
+  transcribeRecording,
   uploadRecording,
 } from "@/api/client";
-import { ROOT } from "@/api/types";
+import { isRunningStatus, ROOT } from "@/api/types";
 import type { Folder, Recording } from "@/api/types";
 
 /** One level of the sidebar: a folder, what it holds, and what sits below. */
@@ -62,6 +66,22 @@ const actionError = ref<string | null>(null);
 
 /** The files still on their way up, by the order they were chosen. */
 const uploads = ref<string[]>([]);
+
+/** Recordings this tab started the pipeline on and is still following. */
+const running = reactive(new Set<string>());
+
+/** How often a running recording is asked what became of it. */
+const POLL_INTERVAL = 10000;
+
+/**
+ * How long a recording is followed before the tab gives up on it.
+ *
+ * Nothing is cancelled when it expires: the pipeline runs on the server and
+ * goes on without anybody watching. Only the polling stops, so a run that
+ * outlives it — or a backend that died holding a recording in a running
+ * status — costs one request every few seconds forever instead.
+ */
+const POLL_TIMEOUT = 30 * 60 * 1000;
 
 /** Where a new folder is being named, and whether it is on its way. */
 const draft = ref<Destination | null>(null);
@@ -236,6 +256,120 @@ async function upload(files: readonly File[], folder: string | null): Promise<vo
   if (failures.length) {
     actionError.value = failures.join(" · ");
   }
+}
+
+// -------------------------------------------------------------- processing
+
+/**
+ * Run a step on a recording, then follow it until it is over.
+ *
+ * The backend answers as soon as the work is queued, so what comes back only
+ * says which step the recording is now in; the status is then polled, and
+ * each answer is swapped into the state, which is what makes the badge move
+ * on its own in the sidebar as well as in the detail pane.
+ */
+async function start(
+  recordingId: string,
+  step: (recordingId: string) => Promise<Recording>,
+): Promise<void> {
+  const recording = recordings.value.find(
+    (candidate) => candidate.id === recordingId,
+  );
+  if (recording === undefined || running.has(recordingId)) {
+    return;
+  }
+
+  running.add(recordingId);
+  actionError.value = null;
+  try {
+    swap(await step(recordingId));
+    await follow(recordingId, recording.name);
+  } catch (cause) {
+    actionError.value = message(cause);
+  } finally {
+    running.delete(recordingId);
+  }
+}
+
+/**
+ * Take a recording all the way: transcript, diarization, summary.
+ *
+ * Without `force` the run reuses whatever is already stored, which is what
+ * makes finishing an interrupted recording cheap; with it the audio is sent
+ * again and everything is replaced.
+ */
+function process(recordingId: string, force = false): Promise<void> {
+  return start(recordingId, (id) => processRecording(id, force));
+}
+
+/**
+ * Transcribe the audio again, alone.
+ *
+ * The summary is dropped by the backend along the way: it describes a
+ * dialogue that no longer exists.
+ */
+function transcribe(recordingId: string): Promise<void> {
+  return start(recordingId, transcribeRecording);
+}
+
+/**
+ * Write a summary from the transcript already stored, without the audio.
+ *
+ * This is what a recording left in `transcribed` — or in `error` with its
+ * transcript intact — is finished off with, and it costs one model call
+ * rather than a whole run.
+ */
+function summarize(recordingId: string): Promise<void> {
+  return start(recordingId, summarizeRecording);
+}
+
+/** True while this tab is following a run it started. */
+function isRunning(recordingId: string): boolean {
+  return running.has(recordingId);
+}
+
+/** Poll a recording until no step is running on it, or until it is gone. */
+async function follow(recordingId: string, name: string): Promise<void> {
+  const deadline = Date.now() + POLL_TIMEOUT;
+
+  while (Date.now() < deadline) {
+    await sleep(POLL_INTERVAL);
+
+    let current: Recording;
+    try {
+      current = await fetchRecording(recordingId);
+    } catch (cause) {
+      if (cause instanceof ApiError && cause.status === 404) {
+        // Deleted while it ran: there is nothing left to report.
+        recordings.value = recordings.value.filter(
+          (candidate) => candidate.id !== recordingId,
+        );
+        return;
+      }
+      throw cause;
+    }
+
+    swap(current);
+    if (!isRunningStatus(current.status)) {
+      if (current.status === "error") {
+        actionError.value = current.has_transcript
+          ? `The summary of ${name} failed. The transcript is stored; it can be generated again.`
+          : `Transcription failed for ${name}. The server log says why.`;
+      }
+      return;
+    }
+  }
+}
+
+/** Put a recording back into the state, wherever it sits in the listing. */
+function swap(recording: Recording): void {
+  recordings.value = recordings.value.map((candidate) =>
+    candidate.id === recording.id ? recording : candidate,
+  );
+}
+
+function sleep(milliseconds: number): Promise<void> {
+  return new Promise((resume) => setTimeout(resume, milliseconds));
 }
 
 // ------------------------------------------------------------------ moving
@@ -470,6 +604,10 @@ export function useLibrary() {
     commitDraft,
     isDrafting,
     upload,
+    process,
+    transcribe,
+    summarize,
+    isRunning,
     startDrag,
     endDrag,
     markTarget,

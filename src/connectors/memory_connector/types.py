@@ -7,14 +7,42 @@ from datetime import datetime
 from enum import Enum
 from typing import Final, Literal
 
-RecordingStatus = Literal["to_process", "processing", "processed", "error"]
+RecordingStatus = Literal[
+    "to_process",
+    "transcribing",
+    "transcribed",
+    "summarizing",
+    "processed",
+    "error",
+]
+"""Where a recording sits in a pipeline made of two steps, not one.
+
+Transcribing costs minutes and money, summarising costs seconds; keeping them
+apart in the status is what lets a recording whose summary failed be seen for
+what it is — a transcript that is already paid for — rather than as a run to
+start over. ``transcribed`` is therefore a resting state, not a passing one:
+the audio has been recognised and nothing more has been asked for yet.
+"""
 
 RECORDING_STATUSES: tuple[RecordingStatus, ...] = (
     "to_process",
-    "processing",
+    "transcribing",
+    "transcribed",
+    "summarizing",
     "processed",
     "error",
 )
+
+RUNNING_STATUSES: tuple[RecordingStatus, ...] = ("transcribing", "summarizing")
+"""The statuses that mean a worker is holding the recording right now."""
+
+LEGACY_STATUSES: dict[str, RecordingStatus] = {"processing": "transcribing"}
+"""Statuses of the single step pipeline, and what they became.
+
+A row left in ``processing`` was being worked on when the process last died,
+and the step it died in is no longer knowable; ``transcribing`` is the one it
+had certainly reached.
+"""
 
 MAX_FOLDER_NAME_LENGTH: Final = 128
 

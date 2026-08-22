@@ -10,7 +10,7 @@ from google.genai import types as genai_types
 from connectors.genai_connectors.base import GenAIConnector
 from connectors.genai_connectors.types import CompletionResponse, Message, Usage
 
-DEFAULT_MODEL = "gemini-3.1-flash"
+DEFAULT_MODEL = "gemini-3.1-flash-lite"
 
 _ROLE_MAP = {"user": "user", "assistant": "model"}
 

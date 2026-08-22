@@ -8,7 +8,9 @@ const props = defineProps<{ status: RecordingStatus }>();
 
 const LABELS: Record<RecordingStatus, string> = {
   to_process: "To process",
-  processing: "Processing",
+  transcribing: "Transcribing",
+  transcribed: "Transcribed",
+  summarizing: "Summarising",
   processed: "Processed",
   error: "Error",
 };
@@ -46,8 +48,12 @@ const label = computed(() => LABELS[props.status] ?? props.status);
 .badge--to_process {
   color: var(--status-to-process);
 }
-.badge--processing {
-  color: var(--status-processing);
+.badge--transcribing,
+.badge--summarizing {
+  color: var(--status-running);
+}
+.badge--transcribed {
+  color: var(--status-transcribed);
 }
 .badge--processed {
   color: var(--status-processed);

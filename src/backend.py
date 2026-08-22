@@ -8,6 +8,7 @@ Example:
     $ uvicorn backend:app --app-dir src --reload
 """
 
+import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
@@ -15,7 +16,7 @@ from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 
 from api import folders_router, mount_frontend, recordings_router
-from config import frontend_dist, storage_root
+from config import ENV_FILE, frontend_dist, storage_root
 from connectors.memory_connector import (
     FolderAlreadyExists,
     FolderNotEmpty,
@@ -27,16 +28,34 @@ from connectors.memory_connector import (
     MemoryConnectorError,
     RecordingNotFound,
 )
+from core import ProcessingPipeline
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
-    """Open the storage for the whole life of the process, then close it."""
+    """Open the storage and the pipeline for the life of the process.
+
+    The pipeline builds its backends only when something is actually
+    processed, so a service whose API keys are not set still starts and
+    still serves everything that does not need them.
+
+    The environment was assembled when :mod:`config` was imported, which is
+    earlier than this; it is reported here because a key silently not picked
+    up is the first thing anybody suspects.
+    """
+    if ENV_FILE is not None:
+        logger.info("Environment read from %s", ENV_FILE)
+
     memory = MemoryConnector(storage_root())
+    pipeline = ProcessingPipeline(memory)
     app.state.memory = memory
+    app.state.pipeline = pipeline
     try:
         yield
     finally:
+        pipeline.close()
         memory.close()
 
 
