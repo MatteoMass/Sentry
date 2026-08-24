@@ -2,11 +2,12 @@
 
 from datetime import datetime
 from typing import Final
+from urllib.parse import quote
 
 from pydantic import BaseModel, Field
 
 from connectors.memory_connector import Folder, Recording, RecordingStatus
-from core import Summary, Transcript, Utterance, speaker_label
+from core import Attachment, Prompt, Summary, Transcript, Utterance, speaker_label
 
 ROOT: Final = "root"
 """How the top level is named over HTTP, where ``None`` cannot be spelled.
@@ -57,6 +58,12 @@ class RecordingOut(BaseModel):
     has_summary: bool = Field(
         default=False, description="Whether a summary is stored with it."
     )
+    has_notes: bool = Field(
+        default=False,
+        description=(
+            "Whether somebody wrote a note on it, or stored a file with one."
+        ),
+    )
     media_type: str | None = Field(
         default=None,
         description=(
@@ -73,6 +80,7 @@ class RecordingOut(BaseModel):
         *,
         has_transcript: bool = False,
         has_summary: bool = False,
+        has_notes: bool = False,
         media_type: str | None = None,
     ) -> "RecordingOut":
         """Build the payload from a connector recording and what it holds."""
@@ -84,6 +92,7 @@ class RecordingOut(BaseModel):
             folder=recording.folder_id,
             has_transcript=has_transcript,
             has_summary=has_summary,
+            has_notes=has_notes,
             media_type=media_type,
         )
 
@@ -162,6 +171,70 @@ class SummaryOut(BaseModel):
         )
 
 
+class AttachmentOut(BaseModel):
+    """One file stored with the note of a recording."""
+
+    name: str = Field(description="File name, and how every endpoint addresses it.")
+    media_type: str = Field(description="What it is served as, from its extension.")
+    size: int = Field(description="Size on disk, in bytes.")
+    added_at: datetime = Field(description="Moment it was stored, in UTC.")
+    url: str = Field(description="Where the file itself is served from.")
+
+    @classmethod
+    def from_attachment(
+        cls, attachment: Attachment, *, recording_id: str
+    ) -> "AttachmentOut":
+        """Build the payload, telling the client where to fetch the file."""
+        return cls(
+            name=attachment.name,
+            media_type=attachment.media_type,
+            size=attachment.size,
+            added_at=attachment.added_at,
+            url=(
+                f"/recordings/{quote(recording_id)}"
+                f"/notes/attachments/{quote(attachment.name)}"
+            ),
+        )
+
+
+class NoteOut(BaseModel):
+    """What somebody added to a recording: a text, and the files beside it.
+
+    Both travel together because both are the note: a screenshot with no
+    sentence around it is as much of an annotation as a sentence with no
+    screenshot, and a client showing one always shows the other.
+    """
+
+    text: str = Field(description="The note, as Markdown. Empty when there is none.")
+    attachments: list[AttachmentOut] = Field(
+        default_factory=list, description="The files stored with it, by name."
+    )
+
+    @classmethod
+    def from_note(
+        cls, text: str, attachments: list[Attachment], *, recording_id: str
+    ) -> "NoteOut":
+        """Build the payload from what the recording folder holds."""
+        return cls(
+            text=text,
+            attachments=[
+                AttachmentOut.from_attachment(attachment, recording_id=recording_id)
+                for attachment in attachments
+            ],
+        )
+
+
+class NoteUpdate(BaseModel):
+    """What a client sends to write the note of a recording.
+
+    Only the text travels: the files stored with it are uploaded and deleted
+    one at a time, and a note saved is never a reason to lose one of them.
+    An empty text is allowed, and is how a note is cleared.
+    """
+
+    text: str = Field(description="The note, as Markdown. Empty clears it.")
+
+
 class FolderOut(BaseModel):
     """A folder as the API exposes it."""
 
@@ -224,3 +297,43 @@ class RecordingRename(BaseModel):
     """
 
     name: str = Field(min_length=1, description="New name to show.")
+
+
+class PromptOut(BaseModel):
+    """A prompt of the pipeline as the API exposes it.
+
+    Both texts travel: the one in force, and the one it ships as. An editor
+    that holds them both can offer a reset, and say whether what is on screen
+    is the default or a rewrite of it, without a second request.
+    """
+
+    id: str = Field(description="Identifier of the prompt, e.g. 'transcription'.")
+    title: str = Field(description="Name shown to whoever is editing it.")
+    description: str = Field(description="What the step does with it.")
+    text: str = Field(description="The prompt the next run will use.")
+    default: str = Field(description="The prompt as it ships.")
+    customized: bool = Field(
+        description="Whether it was rewritten, rather than left as it ships."
+    )
+
+    @classmethod
+    def from_prompt(cls, prompt: Prompt, *, text: str) -> "PromptOut":
+        """Build the payload from a catalogue prompt and the text in force."""
+        return cls(
+            id=prompt.id,
+            title=prompt.title,
+            description=prompt.description,
+            text=text,
+            default=prompt.default,
+            customized=text != prompt.default,
+        )
+
+
+class PromptUpdate(BaseModel):
+    """What a client sends to rewrite a prompt.
+
+    Only the text travels: everything else about a prompt — which step reads
+    it, what it is called — belongs to the catalogue, not to the client.
+    """
+
+    text: str = Field(min_length=1, description="The new prompt.")

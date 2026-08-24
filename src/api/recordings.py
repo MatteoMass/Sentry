@@ -68,8 +68,10 @@ from connectors.memory_connector import (
 from core import (
     ARTIFACTS,
     MEDIA_BASENAME,
+    NOTES_FILE,
     SUMMARY_JSON,
     TRANSCRIPT_JSON,
+    has_notes,
     media_filename,
 )
 
@@ -480,8 +482,9 @@ def stream_media(memory: Memory, recording_id: str) -> FileResponse:
 def download_recording(memory: Memory, recording_id: str) -> FileResponse:
     """Hand back the recording folder as one zip archive.
 
-    Everything the folder holds travels: the media as it was uploaded, and
-    whatever the pipeline wrote next to it. The names inside the archive are
+    Everything the folder holds travels: the media as it was uploaded,
+    whatever the pipeline wrote next to it, and the note somebody added with
+    the files kept beside it. The names inside the archive are
     the ones on disk, under a folder named after the recording, so unpacking
     it twice never spills two recordings into each other.
 
@@ -518,11 +521,13 @@ def download_recording(memory: Memory, recording_id: str) -> FileResponse:
                 archive.write(
                     directory / name,
                     arcname=f"{stem}/{name}",
-                    # Only what the pipeline wrote is text; deflating media
-                    # that is already compressed costs time and saves nothing.
+                    # Only what was written as text is worth deflating;
+                    # media that is already compressed — and the files stored
+                    # with a note, which are usually images — costs time and
+                    # saves nothing.
                     compress_type=(
                         zipfile.ZIP_DEFLATED
-                        if name in ARTIFACTS
+                        if name in ARTIFACTS or name == NOTES_FILE
                         else zipfile.ZIP_STORED
                     ),
                 )
@@ -636,6 +641,7 @@ def _out(memory: MemoryConnector, recording: Recording) -> RecordingOut:
         recording,
         has_transcript=memory.has_file(recording.id, TRANSCRIPT_JSON),
         has_summary=memory.has_file(recording.id, SUMMARY_JSON),
+        has_notes=has_notes(memory, recording.id),
         media_type=None if stored is None else _media_type(stored),
     )
 

@@ -22,6 +22,7 @@ export default defineConfig({
     proxy: {
       "/folders": { target: BACKEND, changeOrigin: true },
       "/recordings": { target: BACKEND, changeOrigin: true },
+      "/prompts": { target: BACKEND, changeOrigin: true },
     },
   },
 });

@@ -173,6 +173,7 @@ class GeminiSpeechToText(SpeechToText):
         api_key: str | None = None,
         model: str | None = None,
         language: str | None = None,
+        system_prompt: str | None = None,
         chunk_seconds: float | None = None,
         context_seconds: float = DEFAULT_CONTEXT_SECONDS,
         timeout: float = DEFAULT_TIMEOUT,
@@ -190,6 +191,8 @@ class GeminiSpeechToText(SpeechToText):
                 tag. It is a hint and not a rule — what the model reports
                 hearing is what the transcript records. When ``None`` it comes
                 from ``SENTRY_TRANSCRIPTION_LANGUAGE``.
+            system_prompt: Instructions the recogniser listens under. When
+                ``None`` the shipped :data:`SYSTEM_PROMPT` is used.
             chunk_seconds: Length of the pieces the audio is cut into. When
                 ``None`` it comes from ``SENTRY_TRANSCRIPTION_CHUNK_MINUTES``
                 and defaults to :data:`DEFAULT_CHUNK_SECONDS`.
@@ -212,6 +215,7 @@ class GeminiSpeechToText(SpeechToText):
             )
 
         self.model = model or os.getenv(MODEL_ENV) or DEFAULT_MODEL
+        self.system_prompt = system_prompt or SYSTEM_PROMPT
         self.language = language or os.getenv(LANGUAGE_ENV) or DEFAULT_LANGUAGE
         self.chunk_seconds = chunk_seconds or _chunk_seconds_from_env()
         self.context_seconds = max(0.0, context_seconds)
@@ -365,7 +369,7 @@ class GeminiSpeechToText(SpeechToText):
     def _config(self) -> genai_types.GenerateContentConfig:
         """Build the generation config: JSON out, and a long enough leash."""
         return genai_types.GenerateContentConfig(
-            system_instruction=SYSTEM_PROMPT,
+            system_instruction=self.system_prompt,
             # Transcription is not a place for invention: the same audio
             # should give the same words twice.
             temperature=0.0,

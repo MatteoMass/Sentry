@@ -7,7 +7,15 @@
  */
 
 import { ROOT } from "@/api/types";
-import type { Folder, Recording, Summary, Transcript } from "@/api/types";
+import type {
+  Attachment,
+  Folder,
+  Note,
+  Prompt,
+  Recording,
+  Summary,
+  Transcript,
+} from "@/api/types";
 
 /** Raised when the backend answers with a status outside 2xx. */
 export class ApiError extends Error {
@@ -163,6 +171,50 @@ export function fetchSummary(recordingId: string): Promise<Summary> {
   return request<Summary>(`/recordings/${encodeURIComponent(recordingId)}/summary`);
 }
 
+/** Read the note somebody wrote on a recording, and the files kept with it. */
+export function fetchNote(recordingId: string): Promise<Note> {
+  return request<Note>(`/recordings/${encodeURIComponent(recordingId)}/notes`);
+}
+
+/**
+ * Store the note of a recording, replacing whatever was there.
+ *
+ * Only the text travels: an empty one clears the note and nothing else, and
+ * the files stored with it are added and removed one at a time.
+ */
+export function saveNote(recordingId: string, text: string): Promise<Note> {
+  return request<Note>(`/recordings/${encodeURIComponent(recordingId)}/notes`, {
+    method: "PUT",
+    body: { text },
+  });
+}
+
+/**
+ * Store a file with the note of a recording.
+ *
+ * The name it lands under is not always the one it was sent with — it is made
+ * safe, and one already taken is numbered rather than overwritten — so what
+ * comes back is what the panel has to draw.
+ */
+export function uploadAttachment(
+  recordingId: string,
+  file: File,
+): Promise<Attachment> {
+  const form = new FormData();
+  form.append("file", file);
+  return request<Attachment>(
+    `/recordings/${encodeURIComponent(recordingId)}/notes/attachments`,
+    { method: "POST", body: form },
+  );
+}
+
+/** Delete one file stored with a note, leaving the text as it is. */
+export function deleteAttachment(recordingId: string, name: string): Promise<void> {
+  return discard(
+    `/recordings/${encodeURIComponent(recordingId)}/notes/attachments/${encodeURIComponent(name)}`,
+  );
+}
+
 /**
  * Store a media file under `folder`, or at the top level for `null`.
  *
@@ -266,4 +318,34 @@ export function deleteFolder(folderId: string, recursive: boolean): Promise<void
   return discard(
     `/folders/${encodeURIComponent(folderId)}?recursive=${recursive}`,
   );
+}
+
+/** List the system prompts of the pipeline, in the order the steps run them. */
+export function fetchPrompts(): Promise<Prompt[]> {
+  return request<Prompt[]>("/prompts");
+}
+
+/**
+ * Replace the text of a prompt, for every run from the next one on.
+ *
+ * Nothing already processed changes: a transcript keeps the words it was
+ * written with, and only a recording run again is steered by the new text.
+ */
+export function savePrompt(promptId: string, text: string): Promise<Prompt> {
+  return request<Prompt>(`/prompts/${encodeURIComponent(promptId)}`, {
+    method: "PUT",
+    body: { text },
+  });
+}
+
+/**
+ * Drop the rewrite of a prompt and go back to the one it ships with.
+ *
+ * The default comes back in the answer, since the editor asking for the reset
+ * is the one that has to show it.
+ */
+export function resetPrompt(promptId: string): Promise<Prompt> {
+  return request<Prompt>(`/prompts/${encodeURIComponent(promptId)}`, {
+    method: "DELETE",
+  });
 }

@@ -13,19 +13,37 @@
  * clicked in the dialogue is a moment in the audio, and reading one has to be
  * the same gesture as hearing it. What the whole folder holds can be taken
  * away in one archive, media and results together.
+ *
+ * The last of the three tabs is the one the pipeline has nothing to do with:
+ * what somebody wants to remember about the recording, and the screenshots
+ * they want to remember it next to. It is written here and stored in the same
+ * folder, which is why it survives a recording being processed again.
  */
 import { computed, nextTick, ref, watch } from "vue";
 
 import {
   ApiError,
   archiveUrl,
+  deleteAttachment,
+  fetchNote,
   fetchSummary,
   fetchTranscript,
   mediaUrl,
+  saveNote,
+  uploadAttachment,
 } from "@/api/client";
 import { isRunningStatus } from "@/api/types";
-import type { Recording, Summary, Transcript, Utterance } from "@/api/types";
+import type {
+  Attachment,
+  Note,
+  Recording,
+  Summary,
+  Transcript,
+  Utterance,
+} from "@/api/types";
 import StatusBadge from "@/components/StatusBadge.vue";
+import { useConfirm } from "@/composables/useConfirm";
+import { pickAttachments } from "@/composables/useFilePicker";
 import { useLibrary } from "@/composables/useLibrary";
 
 // `process` is a global in a browser bundle; the actions are given names of
@@ -39,6 +57,8 @@ const {
   isRunning,
   rename,
 } = useLibrary();
+
+const { ask } = useConfirm();
 
 /** Something the panel offers to do, once. */
 interface Action {
@@ -200,7 +220,7 @@ async function load(recording: Recording | null): Promise<void> {
     if (selected.value?.id === recording.id) {
       transcript.value = null;
       summary.value = null;
-      resultsError.value = cause instanceof ApiError ? cause.message : String(cause);
+      resultsError.value = message(cause);
     }
   } finally {
     if (selected.value?.id === recording.id) {
@@ -445,25 +465,322 @@ const uploadedAt = computed(() => {
 
 // -------------------------------------------------------------------- tabs
 
-/** Which of the two results the right-hand pane is showing. */
-type Tab = "transcript" | "summary";
+/** Which of the three the right-hand pane is showing. */
+type Tab = "summary" | "transcript" | "notes";
 
-const tab = ref<Tab>("transcript");
+const tab = ref<Tab>("summary");
 
 /**
- * The tab worth opening on, which is the one with something in it.
+ * The tabs, in the order they are worth reading.
  *
- * A recording whose summary is the only thing stored opens on the summary;
- * everything else opens on the dialogue, which is the longer read and the
- * one the player is wired to.
+ * The summary comes first because it is what somebody opening a recording
+ * again is after; the dialogue it was written from is behind it, and what a
+ * person added by hand behind that. Only the note carries a mark, since the
+ * other two are already said by the steps on the left.
+ */
+const tabs = computed(() => [
+  { id: "summary" as Tab, label: "Summary", mark: false },
+  { id: "transcript" as Tab, label: "Transcription", mark: false },
+  { id: "notes" as Tab, label: "Notes", mark: hasNote.value },
+]);
+
+/**
+ * The tab worth opening on, which is the first one with something in it.
+ *
+ * A recording that was only transcribed opens on the dialogue rather than on
+ * an empty summary. The notes are never opened on: they are what somebody
+ * comes back to write, and the mark on the tab is enough to say one is there.
  */
 watch(
   () => selected.value?.id ?? null,
   () => {
-    tab.value =
-      selected.value?.has_transcript === false && selected.value.has_summary
-        ? "summary"
-        : "transcript";
+    tab.value = selected.value?.has_summary === false ? "transcript" : "summary";
+  },
+  { immediate: true },
+);
+
+// ------------------------------------------------------------------- notes
+
+/**
+ * Drafts a save turned down, by recording.
+ *
+ * Leaving a recording stores the note it was carrying, and a backend that
+ * refuses would otherwise take the text down with the panel. It is kept here
+ * instead and put back on screen the next time that recording is opened,
+ * which is the only place the person who typed it will look for it.
+ */
+const stranded = new Map<string, string>();
+
+/** The note as it is stored, and the same note as it is being typed. */
+const note = ref<Note | null>(null);
+const noteDraft = ref("");
+const loadingNote = ref(false);
+const savingNote = ref(false);
+const attaching = ref(false);
+const noteError = ref<string | null>(null);
+
+/** True while a file is being dragged over the panel. */
+const dropping = ref(false);
+
+/** The files stored with the note, or none while it is being read. */
+const attachments = computed(() => note.value?.attachments ?? []);
+
+/** True when what is on screen is not what is stored. */
+const noteEdited = computed(() => noteDraft.value !== (note.value?.text ?? ""));
+
+/** True when the recording carries a note at all, which the tab shows. */
+const hasNote = computed(
+  () => (note.value?.text ?? "") !== "" || attachments.value.length > 0,
+);
+
+/** Where the note stands, in the line under the editor. */
+const noteState = computed(() => {
+  if (savingNote.value) {
+    return "Saving…";
+  }
+  if (noteEdited.value) {
+    return "Not stored yet.";
+  }
+  return hasNote.value ? "Stored with the recording." : "";
+});
+
+/**
+ * Read back the note of a recording, and what is stored with it.
+ *
+ * This follows the selection alone and not the status, unlike the results:
+ * nothing the pipeline does touches a note, and a reload while somebody is
+ * typing would be a reload over what they were writing.
+ */
+async function loadNote(recordingId: string | null): Promise<void> {
+  note.value = null;
+  noteDraft.value = "";
+  noteError.value = null;
+  if (recordingId === null) {
+    return;
+  }
+
+  loadingNote.value = true;
+  try {
+    const stored = await fetchNote(recordingId);
+    if (selected.value?.id !== recordingId) {
+      return;
+    }
+    note.value = stored;
+    const lost = stranded.get(recordingId);
+    noteDraft.value = lost ?? stored.text;
+    if (lost !== undefined) {
+      noteError.value =
+        "This note could not be stored when it was left. It is here as it" +
+        " was typed — saving it again is what stores it.";
+    }
+  } catch (cause) {
+    if (selected.value?.id === recordingId) {
+      noteError.value = message(cause);
+    }
+  } finally {
+    if (selected.value?.id === recordingId) {
+      loadingNote.value = false;
+    }
+  }
+}
+
+/**
+ * Store what is in the editor.
+ *
+ * What comes back replaces what is known to be stored, but only replaces the
+ * editor when nothing was typed while the request travelled: a save is not a
+ * reason to lose the sentence somebody started during it.
+ */
+async function storeNote(): Promise<void> {
+  const recording = selected.value;
+  if (recording === null || savingNote.value || !noteEdited.value) {
+    return;
+  }
+
+  const text = noteDraft.value;
+  savingNote.value = true;
+  noteError.value = null;
+  try {
+    const stored = await saveNote(recording.id, text);
+    stranded.delete(recording.id);
+    if (selected.value?.id === recording.id) {
+      note.value = stored;
+      if (noteDraft.value === text) {
+        noteDraft.value = stored.text;
+      }
+    }
+  } catch (cause) {
+    if (selected.value?.id === recording.id) {
+      noteError.value = message(cause);
+    }
+  } finally {
+    savingNote.value = false;
+  }
+}
+
+/** Store a note on the way out, keeping it in hand if that fails. */
+async function flushNote(recordingId: string, text: string): Promise<void> {
+  try {
+    await saveNote(recordingId, text);
+    stranded.delete(recordingId);
+  } catch {
+    stranded.set(recordingId, text);
+  }
+}
+
+/**
+ * Store files with the note, one at a time.
+ *
+ * They go up one after another so that a file the backend turns down — one
+ * too large for a note — is reported without holding back the rest, and so
+ * that the list grows in the order they were chosen.
+ */
+async function attach(files: readonly File[]): Promise<void> {
+  const recording = selected.value;
+  if (recording === null || files.length === 0) {
+    return;
+  }
+
+  attaching.value = true;
+  noteError.value = null;
+  const failures: string[] = [];
+  for (const file of files) {
+    try {
+      const stored = await uploadAttachment(recording.id, file);
+      if (note.value !== null && selected.value?.id === recording.id) {
+        note.value = { ...note.value, attachments: sorted(stored) };
+      }
+    } catch (cause) {
+      failures.push(`${file.name}: ${message(cause)}`);
+    }
+  }
+  attaching.value = false;
+
+  if (failures.length && selected.value?.id === recording.id) {
+    noteError.value = failures.join(" · ");
+  }
+}
+
+/** The stored files with `added` among them, in the order the backend lists. */
+function sorted(added: Attachment): Attachment[] {
+  return [...attachments.value, added].sort((one, other) =>
+    one.name.localeCompare(other.name),
+  );
+}
+
+/** Ask for files and store them with the note. */
+async function attachChosen(): Promise<void> {
+  await attach(await pickAttachments());
+}
+
+/**
+ * Take the files carried by a paste, and let everything else through.
+ *
+ * A screenshot lives in the clipboard and nowhere else until it is pasted,
+ * so this is the shortest way one ever gets stored — and text pasted into
+ * the note is still just text.
+ */
+function onPaste(event: ClipboardEvent): void {
+  const files = [...(event.clipboardData?.files ?? [])];
+  if (files.length === 0) {
+    return;
+  }
+  event.preventDefault();
+  void attach(files);
+}
+
+/** Store what was dropped on the panel, when it is files. */
+function onDrop(event: DragEvent): void {
+  dropping.value = false;
+  void attach([...(event.dataTransfer?.files ?? [])]);
+}
+
+/** Claim a drag, but only one carrying files from outside the app. */
+function onDragOver(event: DragEvent): void {
+  if (![...(event.dataTransfer?.types ?? [])].includes("Files")) {
+    return;
+  }
+  event.preventDefault();
+  dropping.value = true;
+}
+
+/**
+ * Drop the highlight, but only once the pointer has really left.
+ *
+ * Crossing from the panel onto the editor inside it raises a leave too, and
+ * a highlight that blinks on every child would say the drop had been
+ * refused when it had not.
+ */
+function onDragLeave(event: DragEvent): void {
+  const zone = event.currentTarget as HTMLElement;
+  const entered = event.relatedTarget as Node | null;
+  if (entered === null || !zone.contains(entered)) {
+    dropping.value = false;
+  }
+}
+
+/** Delete one stored file, once it is confirmed. */
+async function confirmDetach(file: Attachment): Promise<void> {
+  const recording = selected.value;
+  if (recording === null) {
+    return;
+  }
+
+  const agreed = await ask({
+    title: `Delete “${file.name}”?`,
+    body: "It is removed from the recording folder. This cannot be undone.",
+    confirm: "Delete",
+    danger: true,
+  });
+  if (!agreed || selected.value?.id !== recording.id) {
+    return;
+  }
+
+  noteError.value = null;
+  try {
+    await deleteAttachment(recording.id, file.name);
+    if (note.value !== null && selected.value?.id === recording.id) {
+      note.value = {
+        ...note.value,
+        attachments: attachments.value.filter((kept) => kept.name !== file.name),
+      };
+    }
+  } catch (cause) {
+    if (selected.value?.id === recording.id) {
+      noteError.value = message(cause);
+    }
+  }
+}
+
+/** Say a size the way a file manager would. */
+function fileSize(bytes: number): string {
+  const units = ["B", "kB", "MB", "GB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${unit > 0 && value < 10 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`;
+}
+
+/** What to show about a failure. */
+function message(cause: unknown): string {
+  return cause instanceof ApiError ? cause.message : String(cause);
+}
+
+// The note being typed belongs to the recording that is leaving, so it is
+// stored before the panel is given another one — what was written is worth
+// more than the click that moved away from it.
+watch(
+  () => selected.value?.id ?? null,
+  (recordingId, previous) => {
+    const draft = noteDraft.value;
+    if (previous != null && previous !== recordingId && noteEdited.value) {
+      void flushNote(previous, draft);
+    }
+    dropping.value = false;
+    void loadNote(recordingId);
   },
   { immediate: true },
 );
@@ -614,15 +931,12 @@ watch(
         </section>
       </article>
 
-      <!-- What the pipeline made of it, one result at a time. This is the
-           half that scrolls. -->
+      <!-- What the pipeline made of it and what was added to it, one at a
+           time. This is the half that scrolls. -->
       <section class="pane pane--results">
         <div class="tabs" role="tablist" aria-label="Results">
           <button
-            v-for="entry in [
-              { id: 'transcript' as Tab, label: 'Transcription' },
-              { id: 'summary' as Tab, label: 'Summary' },
-            ]"
+            v-for="entry in tabs"
             :key="entry.id"
             class="tab"
             :class="{ 'tab--on': tab === entry.id }"
@@ -632,14 +946,135 @@ watch(
             @click="tab = entry.id"
           >
             {{ entry.label }}
+            <span v-if="entry.mark" class="tab__mark" aria-hidden="true" />
           </button>
         </div>
 
         <div class="results" role="tabpanel">
-          <p v-if="resultsError !== null" class="failure">{{ resultsError }}</p>
+          <!-- The one tab that is written rather than read: what somebody
+               wants to remember, and what they want it kept next to. The
+               whole panel takes a drop, so a screenshot has somewhere to
+               land wherever it is released. -->
+          <template v-if="tab === 'notes'">
+            <div
+              class="notes"
+              :class="{ 'notes--drop': dropping }"
+              @dragover="onDragOver"
+              @dragleave="onDragLeave"
+              @drop.prevent="onDrop"
+            >
+              <p v-if="noteError !== null" class="failure">{{ noteError }}</p>
+              <p v-if="loadingNote" class="muted">Reading what is stored…</p>
+
+              <template v-else>
+                <textarea
+                  v-model="noteDraft"
+                  class="notes__editor"
+                  spellcheck="false"
+                  :disabled="savingNote"
+                  aria-label="Note on this recording"
+                  placeholder="Anything worth keeping about this recording…"
+                  @paste="onPaste"
+                  @keydown.meta.enter.prevent="storeNote"
+                  @keydown.ctrl.enter.prevent="storeNote"
+                ></textarea>
+
+                <div class="notes__foot">
+                  <span class="muted notes__state">{{ noteState }}</span>
+                  <button
+                    class="button"
+                    type="button"
+                    :disabled="attaching"
+                    @click="attachChosen"
+                  >
+                    {{ attaching ? "Storing…" : "＋ Attach files" }}
+                  </button>
+                  <button
+                    class="button button--go"
+                    type="button"
+                    :disabled="savingNote || !noteEdited"
+                    @click="storeNote"
+                  >
+                    {{ savingNote ? "Saving…" : "Save note" }}
+                  </button>
+                </div>
+
+                <template v-if="attachments.length">
+                  <h4>Attachments</h4>
+                  <ul class="files">
+                    <li v-for="file in attachments" :key="file.name" class="file">
+                      <a
+                        class="file__open"
+                        :href="file.url"
+                        target="_blank"
+                        rel="noopener"
+                        :title="`Open ${file.name}`"
+                      >
+                        <img
+                          v-if="file.media_type.startsWith('image/')"
+                          class="file__preview"
+                          :src="file.url"
+                          :alt="file.name"
+                          loading="lazy"
+                        />
+                        <span v-else class="file__glyph" aria-hidden="true">▤</span>
+                        <span class="file__name">{{ file.name }}</span>
+                      </a>
+                      <span class="muted file__size">{{ fileSize(file.size) }}</span>
+                      <button
+                        class="icon"
+                        type="button"
+                        title="Delete"
+                        :aria-label="`Delete ${file.name}`"
+                        @click="confirmDetach(file)"
+                      >
+                        ×
+                      </button>
+                    </li>
+                  </ul>
+                </template>
+
+                <p class="muted note">
+                  A screenshot can be pasted straight into the note, or dropped
+                  anywhere on this panel. Everything stored here travels with the
+                  download, and no step of the pipeline ever touches it.
+                </p>
+              </template>
+            </div>
+          </template>
+
+          <p v-else-if="resultsError !== null" class="failure">{{ resultsError }}</p>
           <p v-else-if="loadingResults" class="muted">Reading what is stored…</p>
 
-          <template v-else-if="tab === 'transcript'">
+          <template v-else-if="tab === 'summary'">
+            <template v-if="summary !== null">
+              <p v-if="summary.overview" class="overview">{{ summary.overview }}</p>
+              <template
+                v-for="group in [
+                  { heading: 'Key points', entries: summary.key_points },
+                  { heading: 'Decisions', entries: summary.decisions },
+                  { heading: 'Actions', entries: summary.action_items },
+                ]"
+                :key="group.heading"
+              >
+                <template v-if="group.entries.length">
+                  <h4>{{ group.heading }}</h4>
+                  <ul>
+                    <li v-for="(entry, index) in group.entries" :key="index">
+                      {{ entry }}
+                    </li>
+                  </ul>
+                </template>
+              </template>
+              <p class="muted note">Written by {{ summary.model || "the model" }}.</p>
+            </template>
+            <p v-else class="muted">
+              No summary is stored yet. It is written from the transcript, and never
+              from the audio.
+            </p>
+          </template>
+
+          <template v-else>
             <template v-if="transcript !== null">
               <p class="muted note note--first">
                 {{ transcript.language }} · {{ duration }} · {{ speakers }} ·
@@ -671,34 +1106,6 @@ watch(
             </template>
             <p v-else class="muted">
               No transcript is stored yet. Processing the recording makes one.
-            </p>
-          </template>
-
-          <template v-else>
-            <template v-if="summary !== null">
-              <p v-if="summary.overview" class="overview">{{ summary.overview }}</p>
-              <template
-                v-for="group in [
-                  { heading: 'Key points', entries: summary.key_points },
-                  { heading: 'Decisions', entries: summary.decisions },
-                  { heading: 'Actions', entries: summary.action_items },
-                ]"
-                :key="group.heading"
-              >
-                <template v-if="group.entries.length">
-                  <h4>{{ group.heading }}</h4>
-                  <ul>
-                    <li v-for="(entry, index) in group.entries" :key="index">
-                      {{ entry }}
-                    </li>
-                  </ul>
-                </template>
-              </template>
-              <p class="muted note">Written by {{ summary.model || "the model" }}.</p>
-            </template>
-            <p v-else class="muted">
-              No summary is stored yet. It is written from the transcript, and never
-              from the audio.
             </p>
           </template>
         </div>
@@ -959,12 +1366,145 @@ watch(
   color: var(--accent);
 }
 
+/* Says the tab holds something, without opening it. */
+.tab__mark {
+  display: inline-block;
+  width: 0.4em;
+  height: 0.4em;
+  margin-left: 0.4em;
+  border-radius: 50%;
+  background: currentColor;
+  vertical-align: middle;
+}
+
 /* The half that scrolls; the recording beside it does not move with it. */
 .results {
   flex: 1;
   min-height: 0;
   overflow: auto;
   padding: 1.5rem;
+}
+
+/* The note: an editor that takes the room the dialogue would have had, and
+   what is stored with it underneath. */
+.notes {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-height: 100%;
+  border: 1px dashed transparent;
+  border-radius: var(--radius);
+}
+
+/* Says a file released now would land here. */
+.notes--drop {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.notes__editor {
+  min-height: 12rem;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.9rem;
+  line-height: 1.55;
+  resize: vertical;
+}
+
+.notes__editor:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.notes__editor:disabled {
+  opacity: 0.6;
+}
+
+.notes__foot {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.notes__state {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.8rem;
+}
+
+/* What is stored with the note, each row a file. */
+.files {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.file {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.file__open {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 0;
+  color: inherit;
+  text-decoration: none;
+}
+
+/* A screenshot is recognised by what it shows, not by what it is called. */
+.file__preview {
+  flex: none;
+  width: 3.5rem;
+  height: 2.4rem;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) - 2px);
+  object-fit: cover;
+  background: var(--surface-sunken);
+}
+
+.file__glyph {
+  flex: none;
+  width: 3.5rem;
+  height: 2.4rem;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) - 2px);
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+  font-size: 1.1rem;
+  line-height: 2.4rem;
+  text-align: center;
+}
+
+.file__name {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 0.88rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file__open:hover .file__name {
+  text-decoration: underline;
+}
+
+.file__size {
+  flex: none;
+  font-size: 0.78rem;
 }
 
 .overview {

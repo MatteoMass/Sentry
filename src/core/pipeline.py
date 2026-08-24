@@ -32,6 +32,8 @@ from connectors.memory_connector import (
     RecordingStatus,
 )
 from core.gemini_speech import GeminiSpeechToText
+from core.notes import is_note_file
+from core.prompts import SUMMARIZATION, TRANSCRIPTION, prompt_text
 from core.speech import SpeechToText
 from core.summarizer import Summarizer
 from core.types import (
@@ -76,7 +78,10 @@ class ProcessingPipeline:
 
     The two backends are built on first use, so a pipeline can be constructed
     where no API key is set — at application startup, say — and only fail when
-    it is actually asked to do something.
+    it is actually asked to do something. They are also built around the
+    prompts stored at that moment (:mod:`core.prompts`), and built again once
+    one of those prompts is rewritten, so an edit reaches the next run without
+    the process being restarted.
 
     Example:
         >>> pipeline = ProcessingPipeline(MemoryConnector("./data"))
@@ -96,26 +101,58 @@ class ProcessingPipeline:
         Args:
             memory: Storage holding the media and receiving the results.
             transcriber: Speech-to-text backend. When ``None`` a
-                :class:`GeminiSpeechToText` is built on first use.
+                :class:`GeminiSpeechToText` is built on first use, steered by
+                the stored transcription prompt.
             summarizer: Summariser. When ``None`` a default
-                :class:`Summarizer` is built on first use.
+                :class:`Summarizer` is built on first use, steered by the
+                stored summarization prompt.
         """
         self.memory = memory
         self._transcriber = transcriber
         self._summarizer = summarizer
+        self._built_transcriber = transcriber is None
+        self._built_summarizer = summarizer is None
+        # The prompts the backends built here were steered by, so that one
+        # rewritten since can be told apart from one that never changed.
+        self._transcriber_prompt: str | None = None
+        self._summarizer_prompt: str | None = None
 
     @property
     def transcriber(self) -> SpeechToText:
-        """The speech-to-text backend, built on first use when not given."""
-        if self._transcriber is None:
-            self._transcriber = GeminiSpeechToText()
+        """The speech-to-text backend, built on first use when not given.
+
+        A backend built here is rebuilt whenever the stored prompt is no
+        longer the one it was built with: prompts are rewritten while the
+        process runs, and a backend otherwise outlives every edit.
+
+        One that was handed over is left alone — it came with its own
+        instructions, and they are not this pipeline's to overrule.
+        """
+        if self._transcriber is not None and not self._built_transcriber:
+            return self._transcriber
+
+        wanted = prompt_text(self.memory, TRANSCRIPTION)
+        if self._transcriber is None or self._transcriber_prompt != wanted:
+            if self._transcriber is not None:
+                self._transcriber.close()
+            self._transcriber = GeminiSpeechToText(system_prompt=wanted)
+            self._transcriber_prompt = wanted
         return self._transcriber
 
     @property
     def summarizer(self) -> Summarizer:
-        """The summariser, built on first use when not given."""
-        if self._summarizer is None:
-            self._summarizer = Summarizer()
+        """The summariser, built on first use when not given.
+
+        As with the recogniser, one built here follows the stored prompt and
+        is rebuilt when it changes; one that was handed over is not.
+        """
+        if self._summarizer is not None and not self._built_summarizer:
+            return self._summarizer
+
+        wanted = prompt_text(self.memory, SUMMARIZATION)
+        if self._summarizer is None or self._summarizer_prompt != wanted:
+            self._summarizer = Summarizer(system_prompt=wanted)
+            self._summarizer_prompt = wanted
         return self._summarizer
 
     # ---------------------------------------------------------- the pipeline
@@ -378,7 +415,9 @@ def media_filename(memory: MemoryConnector, recording_id: str) -> str | None:
 
     The upload endpoint stores it as ``recording.<ext>``, so that name wins;
     anything else in the folder that the pipeline did not write is taken as
-    the media, which keeps a hand placed file working.
+    the media, which keeps a hand placed file working — anything the user
+    wrote there excepted, since a note and its attachments are theirs and
+    were never the recording.
 
     It lives here rather than on the pipeline because it answers a question
     the storage alone can settle, and one the API asks of recordings it is
@@ -389,7 +428,9 @@ def media_filename(memory: MemoryConnector, recording_id: str) -> str | None:
         folder holds nothing but what the pipeline wrote.
     """
     candidates = [
-        name for name in memory.list_files(recording_id) if name not in ARTIFACTS
+        name
+        for name in memory.list_files(recording_id)
+        if name not in ARTIFACTS and not is_note_file(name)
     ]
     if not candidates:
         return None

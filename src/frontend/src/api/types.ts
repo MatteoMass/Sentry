@@ -58,6 +58,14 @@ export interface Recording {
   has_transcript: boolean;
   has_summary: boolean;
   /**
+   * Whether somebody wrote a note on it, or stored a file with one.
+   *
+   * Unlike the two above it is nobody's decision but the user's: the
+   * pipeline neither reads it nor writes it, and a recording processed
+   * again keeps whatever was added to it.
+   */
+  has_notes: boolean;
+  /**
    * Media type of the stored file, `null` when no media is stored with it.
    *
    * It is what decides whether a player is drawn at all, and whether it is
@@ -99,6 +107,33 @@ export interface Summary {
   markdown: string;
 }
 
+/** One file stored with the note of a recording. */
+export interface Attachment {
+  /** File name, and how every endpoint addresses it. */
+  name: string;
+  /** What it is served as, which is what decides whether it can be shown. */
+  media_type: string;
+  /** Size on disk, in bytes. */
+  size: number;
+  /** ISO 8601, UTC. */
+  added_at: string;
+  /** Where the file itself is served from. */
+  url: string;
+}
+
+/**
+ * What somebody added to a recording: a text, and the files beside it.
+ *
+ * Both are the note, and they are saved apart: writing the text never
+ * touches an attachment, and uploading one never overwrites what is being
+ * typed.
+ */
+export interface Note {
+  /** The note, as Markdown. Empty when there is none. */
+  text: string;
+  attachments: Attachment[];
+}
+
 /** A folder as the API exposes it. */
 export interface Folder {
   id: string;
@@ -107,4 +142,22 @@ export interface Folder {
   created_at: string;
   /** Recordings filed directly in it, subfolders excluded. */
   recordings: number;
+}
+
+/**
+ * One system prompt of the pipeline, as the API exposes it.
+ *
+ * Both texts travel: the one in force and the one it ships as. The editor
+ * holds them together so it can offer a reset, and say whether what is on
+ * screen was rewritten, without asking the backend a second time.
+ */
+export interface Prompt {
+  id: string;
+  title: string;
+  description: string;
+  /** The prompt the next run will be steered by. */
+  text: string;
+  /** The prompt as it ships, which a reset goes back to. */
+  default: string;
+  customized: boolean;
 }

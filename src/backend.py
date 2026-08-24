@@ -15,7 +15,13 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 
-from api import folders_router, mount_frontend, recordings_router
+from api import (
+    folders_router,
+    mount_frontend,
+    notes_router,
+    prompts_router,
+    recordings_router,
+)
 from config import ENV_FILE, frontend_dist, storage_root
 from connectors.memory_connector import (
     FolderAlreadyExists,
@@ -68,7 +74,9 @@ app = FastAPI(
 )
 
 app.include_router(recordings_router)
+app.include_router(notes_router)
 app.include_router(folders_router)
+app.include_router(prompts_router)
 
 
 # ------------------------------------------------------------------ frontend

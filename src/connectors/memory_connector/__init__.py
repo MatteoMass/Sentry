@@ -7,6 +7,7 @@ from connectors.memory_connector.connector import (
 from connectors.memory_connector.db import Database
 from connectors.memory_connector.folders import FolderTree
 from connectors.memory_connector.index import RecordingIndex
+from connectors.memory_connector.settings import SettingsStore
 from connectors.memory_connector.types import (
     ANY_FOLDER,
     RECORDING_STATUSES,
@@ -57,6 +58,7 @@ __all__ = [
     "RecordingIndex",
     "RecordingNotFound",
     "RecordingStatus",
+    "SettingsStore",
     "new_folder_id",
     "new_recording_id",
     "normalize_recording_name",

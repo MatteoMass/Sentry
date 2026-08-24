@@ -1,4 +1,4 @@
-"""Facade over the three persistence subsystems of a recording."""
+"""Facade over the persistence subsystems of a recording, and of the app."""
 
 from collections.abc import Sequence
 from datetime import datetime
@@ -9,6 +9,7 @@ from connectors.memory_connector.blobs import RecordingBlobs
 from connectors.memory_connector.db import Database
 from connectors.memory_connector.folders import FolderTree
 from connectors.memory_connector.index import RecordingIndex
+from connectors.memory_connector.settings import SettingsStore
 from connectors.memory_connector.types import (
     ANY_FOLDER,
     Folder,
@@ -45,11 +46,11 @@ class MemoryConnector:
     is irrelevant: both are ordinary filesystem paths, so the choice belongs to
     configuration, not to the code.
 
-    Three subsystems do the actual work, and stay reachable as :attr:`index`,
-    :attr:`folders` and :attr:`blobs` for the rare caller that needs one of
-    them alone. Everything they expose is mirrored here, so ordinary code only
-    ever talks to the facade — which is also the only place aware of all of
-    them at once.
+    Four subsystems do the actual work, and stay reachable as :attr:`index`,
+    :attr:`folders`, :attr:`blobs` and :attr:`settings` for the rare caller
+    that needs one of them alone. Everything they expose is mirrored here, so
+    ordinary code only ever talks to the facade — which is also the only place
+    aware of all of them at once.
 
     Example:
         >>> memory = MemoryConnector("./data")
@@ -74,6 +75,7 @@ class MemoryConnector:
         # Folders first: the recordings table points at the table it owns.
         self.folders = FolderTree(self.database)
         self.index = RecordingIndex(self.database)
+        self.settings = SettingsStore(self.database)
 
     @property
     def db_path(self) -> Path:
@@ -345,6 +347,20 @@ class MemoryConnector:
     def delete_file(self, recording_id: str, filename: str) -> bool:
         """Delete one file of a recording."""
         return self.blobs.delete_file(recording_id, filename)
+
+    # ------------------------------------------------------- settings facade
+
+    def get_setting(self, key: str, default: str | None = None) -> str | None:
+        """Return a stored setting, or ``default`` when it was never set."""
+        return self.settings.get(key, default)
+
+    def set_setting(self, key: str, value: str) -> str:
+        """Store a setting, replacing whatever was there."""
+        return self.settings.set(key, value)
+
+    def unset_setting(self, key: str) -> bool:
+        """Drop a setting, putting whatever default the caller holds back."""
+        return self.settings.unset(key)
 
     # ---------------------------------------------------------------- shared
 

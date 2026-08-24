@@ -11,6 +11,14 @@ order because the second needs the first:
 2. the dialogue is distilled into the points worth remembering —
    :mod:`core.summarizer`, over the generative connector of the project.
 
+Both steps are steered by a system prompt, and either can be rewritten by the
+user: :mod:`core.prompts` is the catalogue of those prompts and of the
+overrides stored for them.
+
+Not everything a recording carries is machine written. :mod:`core.notes` is
+the other half of its folder: what somebody typed about it, and the files —
+screenshots, mostly — they kept beside it.
+
 :class:`ProcessingPipeline` is what ties them to the storage, and the only
 thing an entrypoint needs to know about.
 """
@@ -37,6 +45,32 @@ from core.pipeline import (
     ProcessingResult,
     media_filename,
 )
+from core.notes import (
+    ATTACHMENTS_DIR,
+    NOTES_FILE,
+    Attachment,
+    add_attachment,
+    attachment_file,
+    attachment_type,
+    delete_attachment,
+    has_notes,
+    is_note_file,
+    list_attachments,
+    read_note,
+    write_note,
+)
+from core.prompts import (
+    PROMPTS,
+    SUMMARIZATION,
+    TRANSCRIPTION,
+    Prompt,
+    UnknownPrompt,
+    get_prompt,
+    prompt_is_custom,
+    prompt_text,
+    reset_prompt,
+    save_prompt,
+)
 from core.speech import SpeechToText
 from core.summarizer import Summarizer
 from core.types import (
@@ -53,6 +87,11 @@ from core.types import (
 
 __all__ = [
     "ARTIFACTS",
+    "ATTACHMENTS_DIR",
+    "NOTES_FILE",
+    "PROMPTS",
+    "SUMMARIZATION",
+    "TRANSCRIPTION",
     "DEFAULT_ENCODINGS",
     "FLAC",
     "MEDIA_BASENAME",
@@ -61,12 +100,14 @@ __all__ = [
     "SUMMARY_MARKDOWN",
     "TRANSCRIPT_JSON",
     "TRANSCRIPT_TEXT",
+    "Attachment",
     "AudioError",
     "CoreError",
     "Encoding",
     "GeminiSpeechToText",
     "MediaNotFound",
     "PreparedAudio",
+    "Prompt",
     "ProcessingPipeline",
     "ProcessingResult",
     "SpeechToText",
@@ -75,11 +116,26 @@ __all__ = [
     "Summary",
     "Transcript",
     "TranscriptionError",
+    "UnknownPrompt",
     "Utterance",
     "Voice",
+    "add_attachment",
+    "attachment_file",
+    "attachment_type",
+    "delete_attachment",
+    "get_prompt",
+    "has_notes",
+    "is_note_file",
+    "list_attachments",
     "media_filename",
     "prepare_audio",
     "probe_duration",
+    "prompt_is_custom",
+    "prompt_text",
+    "read_note",
+    "reset_prompt",
+    "save_prompt",
     "speaker_label",
     "split_audio",
+    "write_note",
 ]

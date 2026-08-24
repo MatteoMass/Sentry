@@ -66,18 +66,24 @@ class Summarizer:
         self,
         connector: GenAIConnector | None = None,
         *,
+        system_prompt: str | None = None,
         temperature: float = 0.2,
     ) -> None:
         """Configure the summariser.
 
         Args:
             connector: Model to write with. When ``None`` a Gemini connector
-                is built on first use, with :data:`SYSTEM_PROMPT` and
+                is built on first use, with the system prompt and
                 ``temperature``.
+            system_prompt: Instructions the model writes under. When ``None``
+                the shipped :data:`SYSTEM_PROMPT` is used. It only reaches a
+                connector built here: one that was handed over already carries
+                its own.
             temperature: Sampling temperature of the default connector. A low
                 one keeps the summary close to what was said.
         """
         self._connector = connector
+        self.system_prompt = system_prompt or SYSTEM_PROMPT
         self._temperature = temperature
 
     @property
@@ -91,7 +97,7 @@ class Summarizer:
         if self._connector is None:
             try:
                 self._connector = GeminiConnector(
-                    system_prompt=SYSTEM_PROMPT, temperature=self._temperature
+                    system_prompt=self.system_prompt, temperature=self._temperature
                 )
             except ValueError as error:
                 raise SummarizationError(str(error)) from error

@@ -6,7 +6,7 @@
  * hidden field around to do it.
  */
 
-/** What the backend accepts, so the dialog does not offer the rest. */
+/** What the upload endpoint accepts, so the dialog does not offer the rest. */
 const MEDIA = "audio/*,video/*";
 
 /**
@@ -16,10 +16,25 @@ const MEDIA = "audio/*,video/*";
  * a click, or the browser opens nothing at all.
  */
 export function pickMedia(): Promise<File[]> {
+  return pick(MEDIA);
+}
+
+/**
+ * Ask for files to store with a note, whatever they are.
+ *
+ * Nothing is filtered here: a note holds what the pipeline could not, and
+ * that is a screenshot as often as it is a deck or a spreadsheet.
+ */
+export function pickAttachments(): Promise<File[]> {
+  return pick("");
+}
+
+/** Open the dialog, offering `accept`, and answer with what was chosen. */
+function pick(accept: string): Promise<File[]> {
   return new Promise((resolve) => {
     const input = document.createElement("input");
     input.type = "file";
-    input.accept = MEDIA;
+    input.accept = accept;
     input.multiple = true;
     input.hidden = true;
 

@@ -13,10 +13,12 @@ import ConfirmDialog from "@/components/ConfirmDialog.vue";
 import ContextMenu from "@/components/ContextMenu.vue";
 import FolderDraft from "@/components/FolderDraft.vue";
 import RecordingRow from "@/components/RecordingRow.vue";
+import SettingsDialog from "@/components/SettingsDialog.vue";
 import TreeNode from "@/components/TreeNode.vue";
 import { useContextMenu } from "@/composables/useContextMenu";
 import { pickMedia } from "@/composables/useFilePicker";
 import { useLibrary } from "@/composables/useLibrary";
+import { useSettings } from "@/composables/useSettings";
 
 const {
   tree,
@@ -38,6 +40,7 @@ const {
   dropInto,
 } = useLibrary();
 const { open, openAt } = useContextMenu();
+const { openSettings } = useSettings();
 
 const empty = computed(
   () => !tree.value.children.length && !tree.value.recordings.length,
@@ -106,6 +109,7 @@ function onDrop(event: DragEvent): void {
         <button class="action" :disabled="loading" title="Reload" @click="refresh">
           {{ loading ? "…" : "↻" }}
         </button>
+        <button class="action" title="Settings" @click="openSettings">⚙</button>
       </div>
     </header>
 
@@ -153,6 +157,7 @@ function onDrop(event: DragEvent): void {
 
     <ContextMenu />
     <ConfirmDialog />
+    <SettingsDialog />
   </aside>
 </template>
 
