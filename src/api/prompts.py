@@ -67,9 +67,7 @@ def read_prompt(memory: Memory, prompt_id: str) -> PromptOut:
     response_model=PromptOut,
     summary="Rewrite a prompt",
 )
-def update_prompt(
-    memory: Memory, prompt_id: str, payload: PromptUpdate
-) -> PromptOut:
+def update_prompt(memory: Memory, prompt_id: str, payload: PromptUpdate) -> PromptOut:
     """Replace the text of a prompt, for every run from the next one on.
 
     Nothing already processed is touched: a transcript keeps the words it was

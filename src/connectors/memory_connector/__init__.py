@@ -1,3 +1,11 @@
+"""Storage: where a recording and everything about it is kept.
+
+:class:`MemoryConnector` is the whole surface — the index, the folder
+tree, the files on disk and the stored settings behind one object. The
+pieces it is built from are exported too, along with the errors it
+raises, which is what the API translates into status codes.
+"""
+
 from connectors.memory_connector.blobs import RecordingBlobs
 from connectors.memory_connector.connector import (
     DB_FILENAME,

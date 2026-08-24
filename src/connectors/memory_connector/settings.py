@@ -71,9 +71,12 @@ class SettingsStore:
             ``True`` when a row was actually deleted.
         """
         with self.database.transaction() as connection:
-            return connection.execute(
-                "DELETE FROM settings WHERE key = ?", (key,)
-            ).rowcount > 0
+            return (
+                connection.execute(
+                    "DELETE FROM settings WHERE key = ?", (key,)
+                ).rowcount
+                > 0
+            )
 
     def all(self) -> dict[str, str]:
         """Return every stored override, by key."""

@@ -19,6 +19,69 @@ dependencies = [
 [tool.poetry]
 package-mode = false
 
+# Linting and formatting are part of the project, not of whoever checks it
+# out: pinned here so every checkout agrees on what "formatted" means.
+[tool.poetry.group.dev.dependencies]
+ruff = "^0.12.12"
+
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.ruff]
+# ``src`` is the import root: modules reach each other as ``core.…``, ``api.…``
+# and ``connectors.…``, so isort is told where that starts or it files every
+# internal import under third-party and reorders the blocks on every run.
+src = ["src"]
+target-version = "py314"
+line-length = 88
+extend-exclude = [".venv", "data"]
+
+[tool.ruff.lint]
+select = [
+    "F",    # pyflakes — real errors: undefined names, unused imports
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "I",    # isort — one import order, applied for us
+    "N",    # pep8-naming
+    "D",    # pydocstyle — the codebase documents itself; keep it that way
+    "UP",   # pyupgrade — stay on modern syntax
+    "B",    # bugbear — mutable defaults, silent surprises
+    "A",    # shadowed builtins
+    "BLE",  # blind `except Exception`
+    "C4",   # comprehension rewrites
+    "DTZ",  # naive datetimes
+    "G",    # logging call style
+    "ISC",  # implicit string concatenation
+    "LOG",  # logging misuse
+    "PIE",  # small dead-weight constructs
+    "PTH",  # pathlib over os.path
+    "RET",  # return-statement shape
+    "SIM",  # simplifications
+    "TID",  # tidy imports
+    "ARG",  # arguments nothing reads
+    "RUF",  # ruff's own checks
+]
+ignore = [
+    # Exceptions here are named for what is missing — ``BlobNotFound``,
+    # ``FolderNotEmpty`` — which reads better at the raise site than the
+    # ``…Error`` suffix N818 asks for, and is the convention throughout.
+    "N818",
+    # ``SpeechToText.close`` is deliberately an inheritable no-op, documented
+    # as such: a backend holding nothing open inherits it and stays closeable.
+    "B027",
+    # ``isinstance(x, X | Y)`` builds a union object on every call; the tuple
+    # form is the faster one and reads no worse.
+    "UP038",
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+# FastAPI fixes the exception-handler signature as ``(request, exc)``; the
+# handlers that answer from the error alone still have to accept the request.
+"src/backend.py" = ["ARG001"]
+
+[tool.ruff.format]
+docstring-code-format = true

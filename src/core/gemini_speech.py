@@ -314,9 +314,7 @@ class GeminiSpeechToText(SpeechToText):
 
         return _parse(self._ask(parts, position))
 
-    def _ask(
-        self, parts: Sequence[genai_types.Part], position: tuple[int, int]
-    ) -> str:
+    def _ask(self, parts: Sequence[genai_types.Part], position: tuple[int, int]) -> str:
         """Call the model, trying again once a failure looks transient.
 
         Raises:
@@ -364,9 +362,7 @@ class GeminiSpeechToText(SpeechToText):
             http_options=genai_types.HttpOptions(timeout=int(self.timeout * 1000)),
         )
 
-    def _context_clip(
-        self, source: Path, chunk: PreparedAudio
-    ) -> PreparedAudio | None:
+    def _context_clip(self, source: Path, chunk: PreparedAudio) -> PreparedAudio | None:
         """Cut the seconds that come just before a piece, if there are any."""
         if self.context_seconds <= 0 or chunk.offset <= 0:
             return None
@@ -419,9 +415,7 @@ class GeminiSpeechToText(SpeechToText):
 
 def _audio_part(audio: PreparedAudio) -> genai_types.Part:
     """Wrap encoded audio as a part of the request."""
-    return genai_types.Part.from_bytes(
-        data=audio.content, mime_type=audio.mime_type
-    )
+    return genai_types.Part.from_bytes(data=audio.content, mime_type=audio.mime_type)
 
 
 def _parse(text: str) -> dict[str, Any]:

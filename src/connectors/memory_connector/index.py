@@ -264,8 +264,7 @@ class RecordingIndex:
         return {
             row["folder_id"]: row["total"]
             for row in self.database.query(
-                "SELECT folder_id, COUNT(*) AS total FROM recordings"
-                " GROUP BY folder_id"
+                "SELECT folder_id, COUNT(*) AS total FROM recordings GROUP BY folder_id"
             )
         }
 

@@ -533,7 +533,9 @@ def download_recording(memory: Memory, recording_id: str) -> FileResponse:
 
     directory = memory.recording_dir(recording_id)
     stem = _archive_stem(recording)
-    handle = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
+    # Closed by the `with handle` below; `delete=False` keeps the archive on
+    # disk after that block so the response can stream it and clean up after.
+    handle = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)  # noqa: SIM115
     archive_path = Path(handle.name)
     try:
         with handle, zipfile.ZipFile(handle, "w") as archive:

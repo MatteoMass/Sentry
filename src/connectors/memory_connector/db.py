@@ -92,9 +92,7 @@ class Database:
             self._depth -= 1
             self._connection.execute(f"RELEASE {name}")
 
-    def query(
-        self, sql: str, parameters: Sequence[object] = ()
-    ) -> list[sqlite3.Row]:
+    def query(self, sql: str, parameters: Sequence[object] = ()) -> list[sqlite3.Row]:
         """Run a read query and return every row."""
         with self._lock:
             return self._connection.execute(sql, parameters).fetchall()

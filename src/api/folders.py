@@ -36,9 +36,7 @@ def create_folder(memory: Memory, payload: FolderCreate) -> FolderOut:
         HTTPException: 404 if the parent does not exist, 409 if a sibling
             already carries that name.
     """
-    folder = memory.create_folder(
-        payload.name, parent_id=folder_ref(payload.parent)
-    )
+    folder = memory.create_folder(payload.name, parent_id=folder_ref(payload.parent))
     return FolderOut.from_folder(folder)
 
 
@@ -124,9 +122,7 @@ def get_folder_path(memory: Memory, folder_id: str) -> list[FolderOut]:
     response_model=FolderOut,
     summary="Rename or move a folder",
 )
-def update_folder(
-    memory: Memory, folder_id: str, payload: FolderUpdate
-) -> FolderOut:
+def update_folder(memory: Memory, folder_id: str, payload: FolderUpdate) -> FolderOut:
     """Rename a folder, move it, or both at once.
 
     Nothing below the folder is rewritten: the tree stores pointers, so a

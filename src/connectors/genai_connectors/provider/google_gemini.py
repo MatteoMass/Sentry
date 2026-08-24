@@ -21,6 +21,14 @@ _ROLE_MAP = {"user": "user", "assistant": "model"}
 
 
 class GeminiConnector(GenAIConnector):
+    """:class:`GenAIConnector` over the ``google-genai`` SDK.
+
+    The key is settled at construction — passed in, or taken from the
+    settings — so a connector that exists is a connector that can call. The
+    client behind it is not: it is built on first use and kept, which leaves
+    an unused connector free.
+    """
+
     def __init__(
         self,
         model: str = DEFAULT_MODEL,
@@ -30,6 +38,19 @@ class GeminiConnector(GenAIConnector):
         temperature: float | None = None,
         max_output_tokens: int | None = None,
     ) -> None:
+        """Settle the model and the credentials to call it with.
+
+        Args:
+            model: Gemini model to call. Defaults to :data:`DEFAULT_MODEL`.
+            api_key: Key to authenticate with. When ``None``, the one the
+                settings read from the environment is used.
+            system_prompt: Instructions prepended to every conversation.
+            temperature: Sampling temperature.
+            max_output_tokens: Upper bound on the tokens generated per call.
+
+        Raises:
+            ValueError: If no key was passed and none is configured.
+        """
         super().__init__(
             model,
             system_prompt=system_prompt,
@@ -44,6 +65,7 @@ class GeminiConnector(GenAIConnector):
 
     @property
     def provider(self) -> str:
+        """Name of the underlying provider, ``'gemini'``."""
         return "gemini"
 
     @cached_property
@@ -52,6 +74,15 @@ class GeminiConnector(GenAIConnector):
         return genai.Client(api_key=self._api_key)
 
     def generate(self, messages: Sequence[Message]) -> CompletionResponse:
+        """Run a completion call and return the whole response at once.
+
+        Args:
+            messages: Conversation history, in chronological order.
+
+        Returns:
+            The generated text with the model name and the token usage
+            Gemini reported.
+        """
         response = self._client.models.generate_content(
             model=self.model,
             contents=self._to_contents(messages),
@@ -60,6 +91,15 @@ class GeminiConnector(GenAIConnector):
         return self._to_completion(response)
 
     def stream(self, messages: Sequence[Message]) -> Iterator[str]:
+        """Run a completion call and yield the text as it is produced.
+
+        Args:
+            messages: Conversation history, in chronological order.
+
+        Yields:
+            Text fragments that, once concatenated, form the full answer.
+            Chunks carrying no text are skipped.
+        """
         chunks = self._client.models.generate_content_stream(
             model=self.model,
             contents=self._to_contents(messages),

@@ -57,9 +57,7 @@ class Encoding:
     options: tuple[str, ...] = ()
 
 
-FLAC = Encoding(
-    name="FLAC", codec="flac", container="flac", mime_type="audio/flac"
-)
+FLAC = Encoding(name="FLAC", codec="flac", container="flac", mime_type="audio/flac")
 """Lossless: nothing of the voices is lost to the codec."""
 
 OGG_OPUS = Encoding(
@@ -277,9 +275,12 @@ def probe_duration(source: Path | str) -> float:
         completed = subprocess.run(
             [
                 ffprobe,
-                "-v", "error",
-                "-show_entries", "format=duration",
-                "-of", "default=noprint_wrappers=1:nokey=1",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
                 str(source),
             ],
             capture_output=True,
@@ -324,18 +325,25 @@ def _encode(
             ffmpeg,
             "-nostdin",
             "-hide_banner",
-            "-loglevel", "error",
+            "-loglevel",
+            "error",
             "-y",
             *(("-ss", f"{start:.3f}") if start > 0 else ()),
-            "-i", str(source),
+            "-i",
+            str(source),
             *(("-t", f"{length:.3f}") if length is not None else ()),
             "-vn",
-            "-map", "a:0",
-            "-ac", "1",
-            "-ar", str(sample_rate),
-            "-c:a", encoding.codec,
+            "-map",
+            "a:0",
+            "-ac",
+            "1",
+            "-ar",
+            str(sample_rate),
+            "-c:a",
+            encoding.codec,
             *encoding.options,
-            "-f", encoding.container,
+            "-f",
+            encoding.container,
             str(target),
         ]
 

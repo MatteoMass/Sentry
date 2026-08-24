@@ -96,7 +96,7 @@ class RecordingBlobs:
                     shutil.copyfileobj(source, destination)
                 destination.flush()
                 os.fsync(destination.fileno())
-            os.replace(temporary, target)
+            temporary.replace(target)
         except BaseException:
             temporary.unlink(missing_ok=True)
             raise

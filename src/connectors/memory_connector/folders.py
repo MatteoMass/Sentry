@@ -236,9 +236,7 @@ class FolderTree:
             self.get(folder_id)
             self._ensure_exists(parent_id)
             if parent_id is not None and parent_id in self.subtree_ids(folder_id):
-                raise InvalidFolderMove(
-                    "A folder cannot be moved inside itself."
-                )
+                raise InvalidFolderMove("A folder cannot be moved inside itself.")
             try:
                 connection.execute(
                     "UPDATE folders SET parent_id = ? WHERE id = ?",

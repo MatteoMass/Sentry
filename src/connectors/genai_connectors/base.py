@@ -79,4 +79,6 @@ class GenAIConnector(ABC):
 
     def __repr__(self) -> str:
         """Return a debug representation showing the provider and the model."""
-        return f"{type(self).__name__}(provider={self.provider!r}, model={self.model!r})"
+        return (
+            f"{type(self).__name__}(provider={self.provider!r}, model={self.model!r})"
+        )

@@ -17,9 +17,7 @@ string has no way to say it and an omitted parameter already means "no filter
 at all". Identifiers are hexadecimal, so the word can never collide with one.
 """
 
-_FOLDER_REF = (
-    f"Identifier of the folder, or {ROOT!r} for the top level."
-)
+_FOLDER_REF = f"Identifier of the folder, or {ROOT!r} for the top level."
 
 
 def folder_ref(value: str | None) -> str | None:
@@ -60,9 +58,7 @@ class RecordingOut(BaseModel):
     )
     has_notes: bool = Field(
         default=False,
-        description=(
-            "Whether somebody wrote a note on it, or stored a file with one."
-        ),
+        description="Whether somebody wrote a note on it, or stored a file with one.",
     )
     media_type: str | None = Field(
         default=None,
@@ -82,7 +78,7 @@ class RecordingOut(BaseModel):
         has_summary: bool = False,
         has_notes: bool = False,
         media_type: str | None = None,
-    ) -> "RecordingOut":
+    ) -> RecordingOut:
         """Build the payload from a connector recording and what it holds."""
         return cls(
             id=recording.id,
@@ -107,7 +103,7 @@ class UtteranceOut(BaseModel):
     end: float = Field(description="Offset of the last word, in seconds.")
 
     @classmethod
-    def from_utterance(cls, utterance: Utterance) -> "UtteranceOut":
+    def from_utterance(cls, utterance: Utterance) -> UtteranceOut:
         """Build the payload from a core utterance."""
         return cls(
             speaker=utterance.speaker,
@@ -131,7 +127,7 @@ class TranscriptOut(BaseModel):
     utterances: list[UtteranceOut] = Field(description="The dialogue, in order.")
 
     @classmethod
-    def from_transcript(cls, transcript: Transcript) -> "TranscriptOut":
+    def from_transcript(cls, transcript: Transcript) -> TranscriptOut:
         """Build the payload from a core transcript."""
         return cls(
             language=transcript.language,
@@ -157,9 +153,7 @@ class SummaryOut(BaseModel):
     markdown: str = Field(description="The same summary, ready to be read.")
 
     @classmethod
-    def from_summary(
-        cls, summary: Summary, *, title: str | None = None
-    ) -> "SummaryOut":
+    def from_summary(cls, summary: Summary, *, title: str | None = None) -> SummaryOut:
         """Build the payload from a core summary."""
         return cls(
             overview=summary.overview,
@@ -183,7 +177,7 @@ class AttachmentOut(BaseModel):
     @classmethod
     def from_attachment(
         cls, attachment: Attachment, *, recording_id: str
-    ) -> "AttachmentOut":
+    ) -> AttachmentOut:
         """Build the payload, telling the client where to fetch the file."""
         return cls(
             name=attachment.name,
@@ -213,7 +207,7 @@ class NoteOut(BaseModel):
     @classmethod
     def from_note(
         cls, text: str, attachments: list[Attachment], *, recording_id: str
-    ) -> "NoteOut":
+    ) -> NoteOut:
         """Build the payload from what the recording folder holds."""
         return cls(
             text=text,
@@ -251,7 +245,7 @@ class FolderOut(BaseModel):
     )
 
     @classmethod
-    def from_folder(cls, folder: Folder, *, recordings: int = 0) -> "FolderOut":
+    def from_folder(cls, folder: Folder, *, recordings: int = 0) -> FolderOut:
         """Build the payload from a connector folder."""
         return cls(
             id=folder.id,
@@ -317,7 +311,7 @@ class PromptOut(BaseModel):
     )
 
     @classmethod
-    def from_prompt(cls, prompt: Prompt, *, text: str) -> "PromptOut":
+    def from_prompt(cls, prompt: Prompt, *, text: str) -> PromptOut:
         """Build the payload from a catalogue prompt and the text in force."""
         return cls(
             id=prompt.id,

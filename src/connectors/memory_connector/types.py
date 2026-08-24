@@ -134,7 +134,7 @@ class Recording:
     folder_id: str | None = None
 
     @classmethod
-    def from_row(cls, row: sqlite3.Row) -> "Recording":
+    def from_row(cls, row: sqlite3.Row) -> Recording:
         """Build a recording from a database row."""
         return cls(
             id=row["id"],
@@ -165,7 +165,7 @@ class Folder:
     created_at: datetime
 
     @classmethod
-    def from_row(cls, row: sqlite3.Row) -> "Folder":
+    def from_row(cls, row: sqlite3.Row) -> Folder:
         """Build a folder from a database row."""
         return cls(
             id=row["id"],

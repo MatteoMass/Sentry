@@ -252,9 +252,8 @@ class ProcessingPipeline:
             AudioError: If the media cannot be turned into sendable audio.
             TranscriptionError: If the provider refuses or fails the job.
         """
-        if not force:
-            if (existing := self.read_transcript(recording_id)) is not None:
-                return existing
+        if not force and (existing := self.read_transcript(recording_id)) is not None:
+            return existing
 
         self.memory.update_status(recording_id, "transcribing")
         try:
@@ -304,9 +303,8 @@ class ProcessingPipeline:
                 given, or if the model fails or answers unusably. The
                 recording is left in ``error``, transcript untouched.
         """
-        if not force:
-            if (existing := self.read_summary(recording_id)) is not None:
-                return existing
+        if not force and (existing := self.read_summary(recording_id)) is not None:
+            return existing
 
         self.memory.update_status(recording_id, "summarizing")
         try:

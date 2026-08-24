@@ -141,9 +141,7 @@ async def folder_conflict(
 @app.exception_handler(InvalidFolderMove)
 @app.exception_handler(InvalidFolderName)
 @app.exception_handler(InvalidRecordingName)
-async def invalid_change(
-    request: Request, error: MemoryConnectorError
-) -> JSONResponse:
+async def invalid_change(request: Request, error: MemoryConnectorError) -> JSONResponse:
     """Turn an impossible move, or an unusable name, into a 400."""
     return JSONResponse({"detail": str(error)}, status_code=status.HTTP_400_BAD_REQUEST)
 
@@ -155,7 +153,9 @@ async def invalid_key(request: Request, error: InvalidKey) -> JSONResponse:
 
 
 @app.exception_handler(MemoryConnectorError)
-async def storage_failure(request: Request, error: MemoryConnectorError) -> JSONResponse:
+async def storage_failure(
+    request: Request, error: MemoryConnectorError
+) -> JSONResponse:
     """Turn any other storage failure into a 500."""
     return JSONResponse(
         {"detail": f"Storage failure: {error}"},

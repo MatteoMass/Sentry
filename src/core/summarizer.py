@@ -96,9 +96,7 @@ class Summarizer:
         self._connector = connector
         self.system_prompt = system_prompt or SYSTEM_PROMPT
         self._model = model or writing.model
-        self._temperature = (
-            writing.temperature if temperature is None else temperature
-        )
+        self._temperature = writing.temperature if temperature is None else temperature
         self._max_output_tokens = max_output_tokens or writing.max_output_tokens
         self.max_characters = max_characters or writing.max_characters
 
@@ -216,6 +214,4 @@ def _entries(value: Any) -> tuple[str, ...]:
         value = [value]
     if not isinstance(value, list):
         return ()
-    return tuple(
-        str(entry).strip() for entry in value if entry and str(entry).strip()
-    )
+    return tuple(str(entry).strip() for entry in value if entry and str(entry).strip())

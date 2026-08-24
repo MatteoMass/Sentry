@@ -170,9 +170,7 @@ def add_attachment(
     return _describe(path)
 
 
-def delete_attachment(
-    memory: MemoryConnector, recording_id: str, name: str
-) -> bool:
+def delete_attachment(memory: MemoryConnector, recording_id: str, name: str) -> bool:
     """Delete one file stored with the note of a recording.
 
     Args:
