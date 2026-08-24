@@ -16,23 +16,25 @@ cut into pieces here: :func:`split_audio` hands back consecutive spans of the
 same media, each knowing where it starts, so a backend that transcribes them
 one at a time can put the timestamps back where they belong.
 
-ffmpeg is expected on the PATH; ``SENTRY_FFMPEG`` and ``SENTRY_FFPROBE``
-point at another build when it is not.
+ffmpeg is expected on the PATH; ``paths.ffmpeg`` and ``paths.ffprobe`` in the
+configuration file — or ``SENTRY_FFMPEG`` and ``SENTRY_FFPROBE`` — point at
+another build when it is not. The rate, the encodings and the bitrate of the
+lossy one are configured too, and are what the defaults below are read from.
 """
 
-import os
+import logging
 import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from config import settings
 from core.types import AudioError
 
-FFMPEG_ENV = "SENTRY_FFMPEG"
-FFPROBE_ENV = "SENTRY_FFPROBE"
+logger = logging.getLogger(__name__)
 
-DEFAULT_SAMPLE_RATE = 16_000
+DEFAULT_SAMPLE_RATE = settings.audio.sample_rate
 """Speech is band limited, and every recognition model is trained at 16 kHz."""
 
 
@@ -65,7 +67,7 @@ OGG_OPUS = Encoding(
     codec="libopus",
     container="ogg",
     mime_type="audio/ogg",
-    options=("-b:a", "24k", "-application", "voip"),
+    options=("-b:a", settings.audio.opus_bitrate, "-application", "voip"),
 )
 """Roughly five times smaller than FLAC, and tuned for voice.
 
@@ -73,7 +75,28 @@ It is what a long meeting falls back to: an hour of speech still fits in a
 single request, at a cost in accuracy that speech tuned Opus keeps small.
 """
 
-DEFAULT_ENCODINGS: tuple[Encoding, ...] = (FLAC, OGG_OPUS)
+ENCODINGS_BY_NAME: dict[str, Encoding] = {"flac": FLAC, "opus": OGG_OPUS}
+"""What the configuration file calls each encoding."""
+
+
+def _configured_encodings() -> tuple[Encoding, ...]:
+    """Return the encodings to try, in the order the configuration asks for.
+
+    A name nobody implements is dropped rather than obeyed, and a list left
+    with nothing usable falls back to both encodings: the audio has to travel
+    somehow, and a typo in a file is no reason for it not to.
+    """
+    chosen: list[Encoding] = []
+    for name in settings.audio.encodings:
+        encoding = ENCODINGS_BY_NAME.get(name.lower())
+        if encoding is None:
+            logger.warning("Ignoring unknown audio encoding %r", name)
+        else:
+            chosen.append(encoding)
+    return tuple(chosen) or (FLAC, OGG_OPUS)
+
+
+DEFAULT_ENCODINGS: tuple[Encoding, ...] = _configured_encodings()
 """Tried in this order: best transcription first, most minutes per byte last."""
 
 
@@ -246,7 +269,7 @@ def probe_duration(source: Path | str) -> float:
         it is shown to a human and never gates the pipeline, so a failure
         here is not worth refusing the whole recording over.
     """
-    ffprobe = _binary(FFPROBE_ENV, "ffprobe")
+    ffprobe = _binary(settings.paths.ffprobe, "ffprobe")
     if ffprobe is None:
         return 0.0
 
@@ -288,11 +311,11 @@ def _encode(
     Raises:
         AudioError: If ffmpeg is missing, fails, or produces nothing.
     """
-    ffmpeg = _binary(FFMPEG_ENV, "ffmpeg")
+    ffmpeg = _binary(settings.paths.ffmpeg, "ffmpeg")
     if ffmpeg is None:
         raise AudioError(
-            "ffmpeg not found: install it, or point "
-            f"{FFMPEG_ENV} at the executable."
+            "ffmpeg not found: install it, or point `paths.ffmpeg` "
+            "(SENTRY_FFMPEG) at the executable."
         )
 
     with tempfile.TemporaryDirectory(prefix="sentry-audio-") as workspace:
@@ -360,9 +383,12 @@ def _starts(total: float, chunk_seconds: float) -> list[float]:
     return [index * chunk_seconds for index in range(count)]
 
 
-def _binary(variable: str, default: str) -> str | None:
-    """Return the executable to run, honouring the environment override."""
-    override = os.getenv(variable)
-    if override:
-        return override
+def _binary(configured: str | None, default: str) -> str | None:
+    """Return the executable to run, honouring what the settings point at.
+
+    A configured path is taken as it is written, so a build outside the PATH
+    can be named in full; without one the PATH is searched.
+    """
+    if configured:
+        return configured
     return shutil.which(default)

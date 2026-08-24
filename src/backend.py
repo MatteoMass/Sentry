@@ -13,6 +13,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, status
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from api import (
@@ -22,7 +23,7 @@ from api import (
     prompts_router,
     recordings_router,
 )
-from config import ENV_FILE, frontend_dist, storage_root
+from config import CONFIG_FILE, ENV_FILE, settings
 from connectors.memory_connector import (
     FolderAlreadyExists,
     FolderNotEmpty,
@@ -48,14 +49,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     processed, so a service whose API keys are not set still starts and
     still serves everything that does not need them.
 
-    The environment was assembled when :mod:`config` was imported, which is
-    earlier than this; it is reported here because a key silently not picked
-    up is the first thing anybody suspects.
+    The settings were assembled when :mod:`config` was imported, which is
+    earlier than this; the files they came from are reported here because a
+    key or a setting silently not picked up is the first thing anybody
+    suspects.
     """
+    logging.basicConfig(level=settings.logging.level)
+    logging.getLogger().setLevel(settings.logging.level)
+
     if ENV_FILE is not None:
         logger.info("Environment read from %s", ENV_FILE)
+    if CONFIG_FILE is not None:
+        logger.info("Configuration read from %s", CONFIG_FILE)
 
-    memory = MemoryConnector(storage_root())
+    memory = MemoryConnector(settings.paths.storage_root)
     pipeline = ProcessingPipeline(memory)
     app.state.memory = memory
     app.state.pipeline = pipeline
@@ -79,11 +86,27 @@ app.include_router(folders_router)
 app.include_router(prompts_router)
 
 
+# ---------------------------------------------------------------------- CORS
+
+# Nothing is installed by default: the same process serves the frontend, so
+# the calls are same origin and there is no header worth adding. A frontend
+# running somewhere else — Vite in development, a separate host — is named in
+# `server.cors_origins`, and only then is the middleware in the way.
+if settings.server.cors_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=list(settings.server.cors_origins),
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+
 # ------------------------------------------------------------------ frontend
 
 # The built single page application answers everything the API did not claim,
 # so it is mounted last; without a build the service is API only.
-mount_frontend(app, frontend_dist())
+mount_frontend(app, settings.paths.frontend_dist)
 
 # --------------------------------------------------------- error translation
 

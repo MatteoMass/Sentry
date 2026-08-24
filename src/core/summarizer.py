@@ -12,24 +12,19 @@ that made it, and point back at the minute it was made.
 
 Any :class:`GenAIConnector` can do the writing; the Gemini one is only the
 default, built on first use so that a pipeline can exist without an API key
-until something actually needs summarising.
+until something actually needs summarising. Which model it is, how freely it
+writes and how much transcript it is given all come from the ``summarization``
+section of the settings.
 """
 
 import json
 import re
 from typing import Any
 
+from config import settings
 from connectors.genai_connectors import GenAIConnector, Message
 from connectors.genai_connectors.provider.google_gemini import GeminiConnector
 from core.types import SummarizationError, Summary, Transcript
-
-MAX_CHARACTERS = 400_000
-"""Longest dialogue sent in one go, past which the tail is dropped.
-
-The audio a single request can carry is worth roughly an hour of speech, well
-under this; the cap only exists so that a pathological transcript degrades
-into a partial summary instead of a rejected request.
-"""
 
 SYSTEM_PROMPT = """\
 You summarise transcripts of meetings, calls and voice notes.
@@ -67,24 +62,45 @@ class Summarizer:
         connector: GenAIConnector | None = None,
         *,
         system_prompt: str | None = None,
-        temperature: float = 0.2,
+        model: str | None = None,
+        temperature: float | None = None,
+        max_output_tokens: int | None = None,
+        max_characters: int | None = None,
     ) -> None:
         """Configure the summariser.
 
+        Everything left at ``None`` is taken from the ``summarization``
+        section of the settings.
+
         Args:
             connector: Model to write with. When ``None`` a Gemini connector
-                is built on first use, with the system prompt and
-                ``temperature``.
+                is built on first use, with the system prompt and the
+                generation settings below.
             system_prompt: Instructions the model writes under. When ``None``
                 the shipped :data:`SYSTEM_PROMPT` is used. It only reaches a
                 connector built here: one that was handed over already carries
                 its own.
+            model: Model the default connector calls.
             temperature: Sampling temperature of the default connector. A low
                 one keeps the summary close to what was said.
+            max_output_tokens: Upper bound on the answer, left to the provider
+                when neither this nor the settings name one.
+            max_characters: Longest dialogue sent in one go, past which the
+                tail is dropped. The audio a single request can carry is worth
+                roughly an hour of speech, well under the default; the cap
+                only exists so that a pathological transcript degrades into a
+                partial summary instead of a rejected request.
         """
+        writing = settings.summarization
+
         self._connector = connector
         self.system_prompt = system_prompt or SYSTEM_PROMPT
-        self._temperature = temperature
+        self._model = model or writing.model
+        self._temperature = (
+            writing.temperature if temperature is None else temperature
+        )
+        self._max_output_tokens = max_output_tokens or writing.max_output_tokens
+        self.max_characters = max_characters or writing.max_characters
 
     @property
     def connector(self) -> GenAIConnector:
@@ -97,7 +113,10 @@ class Summarizer:
         if self._connector is None:
             try:
                 self._connector = GeminiConnector(
-                    system_prompt=self.system_prompt, temperature=self._temperature
+                    self._model,
+                    system_prompt=self.system_prompt,
+                    temperature=self._temperature,
+                    max_output_tokens=self._max_output_tokens,
                 )
             except ValueError as error:
                 raise SummarizationError(str(error)) from error
@@ -121,7 +140,9 @@ class Summarizer:
 
         connector = self.connector
         try:
-            response = connector.generate([Message(role="user", content=_prompt(transcript))])
+            response = connector.generate(
+                [Message(role="user", content=_prompt(transcript, self.max_characters))]
+            )
         except SummarizationError:
             raise
         except Exception as error:
@@ -140,12 +161,12 @@ class Summarizer:
 # ----------------------------------------------------------------- functions
 
 
-def _prompt(transcript: Transcript) -> str:
+def _prompt(transcript: Transcript, max_characters: int) -> str:
     """Build the user turn: what the recording is, then what was said."""
     dialogue = transcript.dialogue
-    truncated = len(dialogue) > MAX_CHARACTERS
+    truncated = len(dialogue) > max_characters
     if truncated:
-        dialogue = dialogue[:MAX_CHARACTERS]
+        dialogue = dialogue[:max_characters]
 
     header = [
         f"Language: {transcript.language}",

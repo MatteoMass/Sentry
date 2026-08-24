@@ -57,6 +57,7 @@ from api.schemas import (
     TranscriptOut,
     folder_ref,
 )
+from config import settings
 from connectors.memory_connector import (
     ANY_FOLDER,
     RUNNING_STATUSES,
@@ -95,6 +96,8 @@ router = APIRouter(prefix="/recordings", tags=["recordings"])
 )
 def upload_recording(
     memory: Memory,
+    pipeline: Pipeline,
+    background: BackgroundTasks,
     file: Annotated[UploadFile, File(description="Audio or video file to store.")],
     folder: Annotated[
         str | None,
@@ -111,20 +114,31 @@ def upload_recording(
     every recording keeps its own folder directly under the recordings root,
     whatever the tree looks like.
 
+    The recording waits in ``to_process`` for somebody to ask for it, unless
+    ``pipeline.auto_process_on_upload`` is set: an installation that never
+    wants to ask says so once in the settings, and the run starts here exactly
+    as the endpoint below would start it.
+
     Args:
         memory: Storage the recording is written to.
+        pipeline: Processing pipeline built at startup.
+        background: Where an automatic run is queued once the answer is on
+            its way.
         file: The uploaded audio or video file.
         folder: Folder to file it under. When absent it stays at the top
             level.
 
     Returns:
-        The recording as it was stored, in ``to_process`` status.
+        The recording as it was stored, in ``to_process`` — or in the status
+        of the step already starting on it.
 
     Raises:
-        HTTPException: 415 if the upload is not audio or video, 404 if the
-            folder does not exist.
+        HTTPException: 415 if the upload is not audio or video, 413 if it is
+            larger than the configured ceiling, 404 if the folder does not
+            exist.
     """
     _ensure_media(file)
+    _ensure_size(file)
     name = Path(file.filename or "").name or MEDIA_BASENAME
 
     recording = memory.create_recording(name, folder_id=folder_ref(folder))
@@ -133,6 +147,12 @@ def upload_recording(
     except BaseException:
         memory.delete_recording(recording.id)
         raise
+
+    if settings.pipeline.auto_process_on_upload:
+        recording = _claim(memory, recording.id, pipeline.next_status(recording.id))
+        background.add_task(
+            _run, partial(pipeline.process, recording.id), recording.id, "Processing"
+        )
 
     return _out(memory, recording)
 
@@ -714,6 +734,30 @@ def _ensure_media(upload: UploadFile) -> None:
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
             detail="Only audio or video files are accepted.",
         )
+
+
+def _ensure_size(upload: UploadFile) -> None:
+    """Reject an upload heavier than the ceiling the settings name.
+
+    The size is the one the multipart parser measured, which it knows because
+    it has already read the part; there is nothing to check when no ceiling is
+    configured, and nothing to check either when the client sent a stream
+    whose length starlette could not tell.
+
+    Raises:
+        HTTPException: 413 if the file is over the ceiling.
+    """
+    ceiling = settings.server.max_upload_bytes
+    if ceiling is None or upload.size is None or upload.size <= ceiling:
+        return
+
+    raise HTTPException(
+        status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+        detail=(
+            f"That recording is {upload.size / 1_048_576:.1f} MiB; "
+            f"the limit is {ceiling / 1_048_576:.1f} MiB."
+        ),
+    )
 
 
 def _content_type(upload: UploadFile) -> str:

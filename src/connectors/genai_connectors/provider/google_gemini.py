@@ -1,16 +1,21 @@
 """Google Gemini Connector (SDK `google-genai`)."""
 
-import os
 from collections.abc import Iterator, Sequence
 from functools import cached_property
 
 from google import genai
 from google.genai import types as genai_types
 
+from config import settings
 from connectors.genai_connectors.base import GenAIConnector
 from connectors.genai_connectors.types import CompletionResponse, Message, Usage
 
 DEFAULT_MODEL = "gemini-3.1-flash-lite"
+"""Fallback for a connector built with no model named.
+
+What the summariser actually calls is `summarization.model` in the settings;
+this is only what a caller reaching for the connector on its own gets.
+"""
 
 _ROLE_MAP = {"user": "user", "assistant": "model"}
 
@@ -31,7 +36,7 @@ class GeminiConnector(GenAIConnector):
             temperature=temperature,
             max_output_tokens=max_output_tokens,
         )
-        self._api_key = api_key or os.environ.get("GEMINI_API_KEY")
+        self._api_key = api_key or settings.gemini_api_key
         if not self._api_key:
             raise ValueError(
                 "API key mancante: passa `api_key` o imposta GEMINI_API_KEY."

@@ -20,7 +20,6 @@ has genuinely not heard before.
 """
 
 import json
-import os
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -31,8 +30,9 @@ from typing import Any, Self
 from google import genai
 from google.genai import types as genai_types
 
+from config import settings
 from core.audio import PreparedAudio, prepare_audio, probe_duration, split_audio
-from core.speech import LANGUAGE_ENV, SpeechToText
+from core.speech import SpeechToText
 from core.types import (
     Transcript,
     TranscriptionError,
@@ -40,32 +40,6 @@ from core.types import (
     format_timestamp,
     speaker_label,
 )
-
-API_KEY_ENV = "GEMINI_API_KEY"
-FALLBACK_API_KEY_ENV = "GOOGLE_API_KEY"
-MODEL_ENV = "SENTRY_TRANSCRIPTION_MODEL"
-CHUNK_MINUTES_ENV = "SENTRY_TRANSCRIPTION_CHUNK_MINUTES"
-
-DEFAULT_MODEL = "gemini-3.7-flash"
-DEFAULT_LANGUAGE = "it-IT"
-
-DEFAULT_CHUNK_SECONDS = 300.0
-"""Five minutes: short enough to answer well inside a timeout, long enough
-that an ordinary call is two or three requests rather than a dozen seams."""
-
-DEFAULT_CONTEXT_SECONDS = 20.0
-"""How much of the previous piece the model may listen to, to place the voices."""
-
-MAX_INLINE_BYTES = 12 * 1024 * 1024
-"""Ceiling on the audio of one request.
-
-The bytes travel base64 encoded inside the JSON, which inflates them by a
-third, so the ceiling sits well under the one the API documents. A piece too
-heavy for it is re-encoded to Opus rather than refused.
-"""
-
-DEFAULT_TIMEOUT = 600.0
-DEFAULT_ATTEMPTS = 2
 
 TAIL_LINES = 6
 """How many of the previous piece's lines are quoted into the next prompt."""
@@ -175,52 +149,59 @@ class GeminiSpeechToText(SpeechToText):
         language: str | None = None,
         system_prompt: str | None = None,
         chunk_seconds: float | None = None,
-        context_seconds: float = DEFAULT_CONTEXT_SECONDS,
-        timeout: float = DEFAULT_TIMEOUT,
-        attempts: int = DEFAULT_ATTEMPTS,
+        context_seconds: float | None = None,
+        timeout: float | None = None,
+        attempts: int | None = None,
+        max_inline_bytes: int | None = None,
     ) -> None:
         """Configure the recogniser.
 
+        Every argument left at ``None`` is taken from the ``transcription``
+        section of the settings, which is where an installation says how it
+        wants its audio sent; what is passed here overrules it, since a caller
+        building its own recogniser has a reason to.
+
         Args:
-            api_key: Key to call the API with. When ``None`` it is read from
-                ``GEMINI_API_KEY``, then from ``GOOGLE_API_KEY``.
-            model: Model to listen with. When ``None`` it comes from
-                ``SENTRY_TRANSCRIPTION_MODEL`` and defaults to
-                :data:`DEFAULT_MODEL`.
+            api_key: Key to call the API with. When ``None`` it is the one the
+                environment carries, ``GEMINI_API_KEY`` then
+                ``GOOGLE_API_KEY``.
+            model: Model to listen with.
             language: Language the recording is expected to be in, as a BCP-47
                 tag. It is a hint and not a rule — what the model reports
-                hearing is what the transcript records. When ``None`` it comes
-                from ``SENTRY_TRANSCRIPTION_LANGUAGE``.
+                hearing is what the transcript records.
             system_prompt: Instructions the recogniser listens under. When
                 ``None`` the shipped :data:`SYSTEM_PROMPT` is used.
-            chunk_seconds: Length of the pieces the audio is cut into. When
-                ``None`` it comes from ``SENTRY_TRANSCRIPTION_CHUNK_MINUTES``
-                and defaults to :data:`DEFAULT_CHUNK_SECONDS`.
+            chunk_seconds: Length of the pieces the audio is cut into.
             context_seconds: How much of the previous piece travels with each
                 request so the voices can be matched across the seam. ``0``
                 sends none of it, leaving only the written roster to go on.
             timeout: How long one request may take, in seconds.
             attempts: How many times a piece is tried before the recording is
                 given up on.
+            max_inline_bytes: Ceiling on the audio of one request. A piece too
+                heavy for it is re-encoded to Opus rather than refused.
 
         Raises:
             TranscriptionError: If no API key can be found.
         """
-        self._api_key = api_key or os.getenv(API_KEY_ENV) or os.getenv(
-            FALLBACK_API_KEY_ENV
-        )
+        tuning = settings.transcription
+
+        self._api_key = api_key or settings.gemini_api_key
         if not self._api_key:
             raise TranscriptionError(
-                f"Missing API key: pass `api_key` or set {API_KEY_ENV}."
+                "Missing API key: pass `api_key` or set GEMINI_API_KEY."
             )
 
-        self.model = model or os.getenv(MODEL_ENV) or DEFAULT_MODEL
+        self.model = model or tuning.model
         self.system_prompt = system_prompt or SYSTEM_PROMPT
-        self.language = language or os.getenv(LANGUAGE_ENV) or DEFAULT_LANGUAGE
-        self.chunk_seconds = chunk_seconds or _chunk_seconds_from_env()
-        self.context_seconds = max(0.0, context_seconds)
-        self.timeout = timeout
-        self.attempts = max(1, attempts)
+        self.language = language or tuning.language
+        self.chunk_seconds = chunk_seconds or tuning.chunk_seconds
+        self.context_seconds = max(
+            0.0, tuning.context_seconds if context_seconds is None else context_seconds
+        )
+        self.timeout = timeout or tuning.timeout_seconds
+        self.attempts = max(1, attempts or tuning.attempts)
+        self.max_inline_bytes = max_inline_bytes or tuning.max_inline_bytes
 
     @property
     def provider(self) -> str:
@@ -255,7 +236,7 @@ class GeminiSpeechToText(SpeechToText):
         """
         source = Path(media)
         chunks = split_audio(
-            source, chunk_seconds=self.chunk_seconds, max_bytes=MAX_INLINE_BYTES
+            source, chunk_seconds=self.chunk_seconds, max_bytes=self.max_inline_bytes
         )
 
         roster: list[Voice] = []
@@ -395,7 +376,7 @@ class GeminiSpeechToText(SpeechToText):
             source,
             start=chunk.offset - length,
             length=length,
-            max_bytes=MAX_INLINE_BYTES,
+            max_bytes=self.max_inline_bytes,
         )
 
     def _brief(
@@ -441,22 +422,6 @@ def _audio_part(audio: PreparedAudio) -> genai_types.Part:
     return genai_types.Part.from_bytes(
         data=audio.content, mime_type=audio.mime_type
     )
-
-
-def _chunk_seconds_from_env() -> float:
-    """Read the piece length from the environment, in minutes.
-
-    A value that cannot be read as a positive number of minutes is ignored:
-    the recording is worth transcribing whatever somebody typed there.
-    """
-    raw = os.getenv(CHUNK_MINUTES_ENV)
-    if not raw:
-        return DEFAULT_CHUNK_SECONDS
-    try:
-        minutes = float(raw)
-    except ValueError:
-        return DEFAULT_CHUNK_SECONDS
-    return minutes * 60 if minutes > 0 else DEFAULT_CHUNK_SECONDS
 
 
 def _parse(text: str) -> dict[str, Any]:

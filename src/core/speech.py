@@ -20,9 +20,6 @@ from pathlib import Path
 
 from core.types import Transcript
 
-LANGUAGE_ENV = "SENTRY_TRANSCRIPTION_LANGUAGE"
-"""Environment variable naming the language the recordings are expected in."""
-
 
 class SpeechToText(ABC):
     """Base class for a backend that turns audio into a diarized transcript.
