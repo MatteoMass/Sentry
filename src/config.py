@@ -149,6 +149,10 @@ class Transcription:
         timeout_seconds: How long one request may take.
         attempts: How many times a piece is tried before the recording is
             given up on.
+        max_output_tokens: Room the model is given to answer in. A piece of
+            speech dense enough to overrun it comes back as JSON cut in half,
+            so the ceiling is raised well above what a few minutes of dialogue
+            weigh rather than left at whatever the provider defaults to.
     """
 
     model: str = "gemini-3.1-flash-lite"
@@ -158,6 +162,7 @@ class Transcription:
     max_inline_mb: float = 12.0
     timeout_seconds: float = 600.0
     attempts: int = 2
+    max_output_tokens: int = 32_768
 
     @property
     def chunk_seconds(self) -> float:
@@ -474,6 +479,12 @@ def _transcription(document: dict[str, Any]) -> Transcription:
         ),
         attempts=section.read(
             "attempts", "SENTRY_TRANSCRIPTION_ATTEMPTS", _count, fallback.attempts
+        ),
+        max_output_tokens=section.read(
+            "max_output_tokens",
+            "SENTRY_TRANSCRIPTION_MAX_OUTPUT_TOKENS",
+            _count,
+            fallback.max_output_tokens,
         ),
     )
 

@@ -31,8 +31,9 @@ services:
       SENTRY_FFMPEG: /usr/bin/ffmpeg
       SENTRY_FFPROBE: /usr/bin/ffprobe
     volumes:
-      # Recordings and the database outlive the container.
-      - ./data:/app/data
+      # Recordings and the database live in a named volume, so they outlive
+      # the container and do not depend on a folder in the checkout.
+      - sentry-data:/app/data
       # Read-only: the settings are edited on the host and picked up by a
       # restart, never written back by the service.
       - ./sentry.yml:/app/sentry.yml:ro
@@ -65,4 +66,6 @@ services:
     command: sh -c "npm ci && npm run build"
 
 volumes:
+  # `docker volume inspect sentry_sentry-data` says where it is on disk.
+  sentry-data:
   frontend-node-modules:

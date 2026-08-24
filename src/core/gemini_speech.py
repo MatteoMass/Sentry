@@ -17,10 +17,20 @@ voice heard so far, and the last seconds of the previous piece as a second
 clip the model may listen to but must not transcribe. It is asked to reuse the
 number of a voice it recognises, and to open a new one only for somebody it
 has genuinely not heard before.
+
+A piece can also be too talkative for one answer. The reply is JSON and the
+model may only write so much of it, so a dense few minutes come back cut in
+half — a string left open, an array never closed — and no amount of asking
+again fixes it, since the same audio meets the same ceiling. What fixes it is
+less audio: a piece whose answer was cut off is halved and its halves are
+transcribed in its place, as many times as it takes. Only a piece already too
+short to halve falls back on reading what the answer had managed to finish.
 """
 
 import json
+import logging
 import time
+from collections import deque
 from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import cached_property
@@ -41,11 +51,19 @@ from core.types import (
     speaker_label,
 )
 
+logger = logging.getLogger(__name__)
+
 TAIL_LINES = 6
 """How many of the previous piece's lines are quoted into the next prompt."""
 
 TAIL_CHARACTERS = 240
 """How much of one quoted line is kept; a whole paragraph is not needed."""
+
+SPLIT_FLOOR_SECONDS = 45.0
+"""Shortest piece worth halving again after an answer was cut off.
+
+Below it the audio is no longer the reason the answer did not fit, and cutting
+further only buys more requests and more seams between the voices."""
 
 SYSTEM_PROMPT = """\
 You transcribe recordings and tell the speakers apart.
@@ -65,7 +83,8 @@ Rules:
 - Describe each voice you used, well enough for the next part of the
   recording to recognise it: pitch and timbre, pace, accent, the role the
   person plays in the conversation, and their name when it is said out loud.
-  Describe it in English, however the recording is spoken.
+  Describe it in English, however the recording is spoken, and keep it to one
+  short sentence: it is a note to recognise a voice by, not a portrait.
 - Transcribe only the clip you are told to transcribe. A context clip is
   there so that you can hear voices you already know; not one word of it
   belongs in your answer.
@@ -113,6 +132,21 @@ _SCHEMA: dict[str, Any] = {
 }
 
 
+class _Truncated(Exception):
+    """Raised when the model ran out of room before closing its JSON.
+
+    It carries the half an answer that did arrive, which is worth keeping only
+    when the piece can no longer be cut into shorter ones.
+
+    Attributes:
+        text: What the model had written when it was stopped.
+    """
+
+    def __init__(self, text: str) -> None:
+        super().__init__("the answer hit the ceiling on its length")
+        self.text = text
+
+
 @dataclass(frozen=True, slots=True)
 class Voice:
     """One voice as the model described it, so a later piece can find it again.
@@ -153,6 +187,7 @@ class GeminiSpeechToText(SpeechToText):
         timeout: float | None = None,
         attempts: int | None = None,
         max_inline_bytes: int | None = None,
+        max_output_tokens: int | None = None,
     ) -> None:
         """Configure the recogniser.
 
@@ -180,6 +215,9 @@ class GeminiSpeechToText(SpeechToText):
                 given up on.
             max_inline_bytes: Ceiling on the audio of one request. A piece too
                 heavy for it is re-encoded to Opus rather than refused.
+            max_output_tokens: Room the model is given to answer in. A piece
+                whose answer does not fit is halved and sent again, so this is
+                what decides how rarely that has to happen.
 
         Raises:
             TranscriptionError: If no API key can be found.
@@ -202,6 +240,7 @@ class GeminiSpeechToText(SpeechToText):
         self.timeout = timeout or tuning.timeout_seconds
         self.attempts = max(1, attempts or tuning.attempts)
         self.max_inline_bytes = max_inline_bytes or tuning.max_inline_bytes
+        self.max_output_tokens = max_output_tokens or tuning.max_output_tokens
 
     @property
     def provider(self) -> str:
@@ -222,6 +261,11 @@ class GeminiSpeechToText(SpeechToText):
         seconds of sound — that keeps a voice the same voice from one piece to
         the next.
 
+        The pieces are a queue rather than a list because one can turn into
+        two: when an answer comes back cut off against the model's ceiling on
+        its own length, the piece is halved and its halves take its place in
+        the queue, which is the only thing that makes the answer shorter.
+
         Args:
             media: Audio or video file to transcribe.
 
@@ -235,23 +279,50 @@ class GeminiSpeechToText(SpeechToText):
                 model answers something that cannot be read.
         """
         source = Path(media)
-        chunks = split_audio(
-            source, chunk_seconds=self.chunk_seconds, max_bytes=self.max_inline_bytes
+        pending = deque(
+            split_audio(
+                source,
+                chunk_seconds=self.chunk_seconds,
+                max_bytes=self.max_inline_bytes,
+            )
         )
 
         roster: list[Voice] = []
         utterances: list[Utterance] = []
         language = ""
+        done = 0
 
-        for index, chunk in enumerate(chunks):
-            answer = self._transcribe_chunk(
-                source,
-                chunk,
-                position=(index, len(chunks)),
-                roster=roster,
-                tail=utterances,
-            )
+        while pending:
+            chunk = pending.popleft()
+            # The total counts what is left to do, so it grows with the queue
+            # when a piece is halved rather than lying about what is coming.
+            position = (done, done + 1 + len(pending))
 
+            try:
+                answer = self._transcribe_chunk(
+                    source, chunk, position=position, roster=roster, tail=utterances
+                )
+            except _Truncated as cut:
+                if halves := self._halve(source, chunk):
+                    logger.warning(
+                        "Part %d of %d answered past its length; transcribing "
+                        "its %s again in two halves.",
+                        position[0] + 1,
+                        position[1],
+                        format_timestamp(chunk.duration),
+                    )
+                    pending.extendleft(reversed(halves))
+                    continue
+
+                logger.warning(
+                    "Part %d of %d answered past its length and is too short "
+                    "to halve; keeping what it had finished saying.",
+                    position[0] + 1,
+                    position[1],
+                )
+                answer = _salvage(cut)
+
+            done += 1
             language = language or _text(answer.get("language"))
             _merge_voices(roster, answer.get("speakers"))
             utterances.extend(_utterances(answer.get("utterances"), chunk))
@@ -286,6 +357,8 @@ class GeminiSpeechToText(SpeechToText):
         """Send one piece and return the object the model answered with.
 
         Raises:
+            _Truncated: If the model ran out of room before it had finished
+                answering, which the caller cures by sending less audio.
             TranscriptionError: If every attempt fails, or if the answer
                 cannot be read as the JSON that was asked for.
         """
@@ -318,6 +391,9 @@ class GeminiSpeechToText(SpeechToText):
         """Call the model, trying again once a failure looks transient.
 
         Raises:
+            _Truncated: If the model stopped against the ceiling on its
+                answer. That is not transient — the same audio would meet the
+                same ceiling — so it is not retried here.
             TranscriptionError: If no attempt comes back with an answer.
         """
         index, total = position
@@ -333,9 +409,18 @@ class GeminiSpeechToText(SpeechToText):
             except Exception as error:  # noqa: BLE001 — the SDK raises broadly
                 failures.append(f"attempt {attempt}: {error}")
             else:
-                if response.text:
-                    return response.text
-                failures.append(f"attempt {attempt}: the model answered nothing")
+                answer = response.text or ""
+                reason = _finish_reason(response)
+
+                if reason == "MAX_TOKENS":
+                    raise _Truncated(answer)
+                if answer:
+                    return answer
+
+                failures.append(
+                    f"attempt {attempt}: the model answered nothing"
+                    + (f" ({reason.lower()})" if reason else "")
+                )
 
             if attempt < self.attempts:
                 time.sleep(2.0 * attempt)
@@ -354,6 +439,9 @@ class GeminiSpeechToText(SpeechToText):
             temperature=0.0,
             response_mime_type="application/json",
             response_schema=_SCHEMA,
+            # A transcript of a few minutes of dense speech is a long piece of
+            # JSON, and one stopped halfway is one that cannot be read at all.
+            max_output_tokens=self.max_output_tokens,
             # Nothing here calls a tool, and leaving the machinery on only
             # earns a warning on every piece of the recording.
             automatic_function_calling=genai_types.AutomaticFunctionCallingConfig(
@@ -374,6 +462,36 @@ class GeminiSpeechToText(SpeechToText):
             length=length,
             max_bytes=self.max_inline_bytes,
         )
+
+    def _halve(self, source: Path, chunk: PreparedAudio) -> list[PreparedAudio]:
+        """Cut a piece in two, for when its answer did not fit in one reply.
+
+        Returns:
+            The two halves, in order, or nothing at all when the piece is
+            already short enough that its length is not what went wrong — or
+            when its length is unknown, there being nothing to halve then.
+
+        Raises:
+            AudioError: If the halves cannot be cut or do not fit a request.
+        """
+        if chunk.duration < SPLIT_FLOOR_SECONDS * 2:
+            return []
+
+        half = chunk.duration / 2
+        return [
+            prepare_audio(
+                source,
+                start=chunk.offset,
+                length=half,
+                max_bytes=self.max_inline_bytes,
+            ),
+            prepare_audio(
+                source,
+                start=chunk.offset + half,
+                length=chunk.duration - half,
+                max_bytes=self.max_inline_bytes,
+            ),
+        ]
 
     def _brief(
         self,
@@ -418,22 +536,153 @@ def _audio_part(audio: PreparedAudio) -> genai_types.Part:
     return genai_types.Part.from_bytes(data=audio.content, mime_type=audio.mime_type)
 
 
+def _finish_reason(response: Any) -> str:
+    """Say why the model stopped writing, as far as the answer admits.
+
+    An empty string means it did not say — which is read as nothing having
+    gone wrong, since the only reasons worth acting on are the ones named.
+    """
+    for candidate in getattr(response, "candidates", None) or ():
+        reason = getattr(candidate, "finish_reason", None)
+        if reason is not None:
+            return str(getattr(reason, "name", reason))
+    return ""
+
+
 def _parse(text: str) -> dict[str, Any]:
     """Read the object the model was asked to answer with.
+
+    An answer that is nearly JSON — fenced as code, or trailing a sentence the
+    model could not help adding — is read anyway: the alternative is losing a
+    transcript that is sitting right there.
 
     Raises:
         TranscriptionError: If the answer is not a JSON object.
     """
-    try:
-        payload = json.loads(text)
-    except json.JSONDecodeError as error:
+    payload = _decode(text)
+    if payload is None:
         raise TranscriptionError(
             f"The model did not answer with JSON: {text.strip()[:300]!r}"
-        ) from error
+        )
 
     if not isinstance(payload, dict):
         raise TranscriptionError("The model answered with JSON, but not an object.")
     return payload
+
+
+def _salvage(cut: _Truncated) -> dict[str, Any]:
+    """Read what a cut-off answer had already finished saying.
+
+    Only what the model closed is kept: the utterance it was writing when it
+    was stopped is half a sentence, and half a sentence in a transcript is
+    worse than a second of silence.
+
+    Raises:
+        TranscriptionError: If nothing whole survived the cut, there being
+            nothing to keep and no shorter piece left to try.
+    """
+    payload = _decode(cut.text)
+    if isinstance(payload, dict) and payload.get("utterances"):
+        return payload
+
+    raise TranscriptionError(
+        "The model was cut off before it had transcribed anything: "
+        f"{cut.text.strip()[:300]!r}"
+    )
+
+
+def _decode(text: str) -> Any:
+    """Read a JSON value out of an answer, repairing it if it was cut short.
+
+    Returns:
+        What the answer held, or ``None`` when nothing in it can be read.
+    """
+    body = _unfence(text)
+    if not body:
+        return None
+
+    try:
+        return json.loads(body)
+    except json.JSONDecodeError:
+        pass
+
+    repaired = _repair(body)
+    if repaired is None:
+        return None
+
+    try:
+        payload = json.loads(repaired)
+    except json.JSONDecodeError:
+        return None
+
+    logger.warning(
+        "The model's answer was incomplete; read it up to the last whole "
+        "value, dropping %d characters.",
+        len(body) - len(repaired),
+    )
+    return payload
+
+
+def _unfence(text: str) -> str:
+    """Strip a markdown code fence, and anything outside the JSON itself."""
+    body = text.strip()
+    if body.startswith("```"):
+        body = body.split("\n", 1)[-1] if "\n" in body else ""
+        body = body.removesuffix("```").strip()
+
+    opening = min(
+        (index for index in (body.find("{"), body.find("[")) if index >= 0),
+        default=-1,
+    )
+    return body[opening:].strip() if opening > 0 else body
+
+
+def _repair(text: str) -> str | None:
+    """Close a JSON document that was cut off while it was being written.
+
+    The text is read once, character by character, keeping track of the
+    containers that were opened and of whether the reading is inside a string.
+    What comes back is the text up to the last value that was finished, with
+    the containers still open closed behind it — so a transcript stopped
+    mid-utterance keeps every utterance before it and loses only the one that
+    was never finished.
+
+    Returns:
+        A document that can be parsed, or ``None`` when nothing whole was
+        written before the cut.
+    """
+    closers: list[str] = []
+    cut: int | None = None
+    # What was still open at the cut, which is not what is open at the end of
+    # the text: everything begun after the last whole value is thrown away.
+    remainder: tuple[str, ...] = ()
+    in_string = escaped = False
+
+    for index, character in enumerate(text):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == '"':
+                in_string = False
+            continue
+
+        if character == '"':
+            in_string = True
+        elif character in "{[":
+            closers.append("}" if character == "{" else "]")
+        elif character in "}]":
+            if not closers or closers.pop() != character:
+                return None
+            # A value closed at the top level is the whole document, and it
+            # did not parse: there is nothing here to repair.
+            if closers:
+                cut, remainder = index + 1, tuple(closers)
+
+    if not closers or cut is None:
+        return None
+    return text[:cut] + "".join(reversed(remainder))
 
 
 def _merge_voices(roster: list[Voice], described: Any) -> None:
