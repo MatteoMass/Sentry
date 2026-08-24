@@ -57,6 +57,14 @@ export interface Recording {
    */
   has_transcript: boolean;
   has_summary: boolean;
+  /**
+   * Media type of the stored file, `null` when no media is stored with it.
+   *
+   * It is what decides whether a player is drawn at all, and whether it is
+   * one with a picture: everything else about the media — where it is, how
+   * long it runs — is read from the file itself once it is loaded.
+   */
+  media_type: string | null;
 }
 
 /** One uninterrupted run of words from a single speaker. */

@@ -57,6 +57,14 @@ class RecordingOut(BaseModel):
     has_summary: bool = Field(
         default=False, description="Whether a summary is stored with it."
     )
+    media_type: str | None = Field(
+        default=None,
+        description=(
+            "Media type of the stored file, null when the folder holds no"
+            " media. It is what tells a client whether to draw a player, and"
+            " which one."
+        ),
+    )
 
     @classmethod
     def from_recording(
@@ -65,6 +73,7 @@ class RecordingOut(BaseModel):
         *,
         has_transcript: bool = False,
         has_summary: bool = False,
+        media_type: str | None = None,
     ) -> "RecordingOut":
         """Build the payload from a connector recording and what it holds."""
         return cls(
@@ -75,6 +84,7 @@ class RecordingOut(BaseModel):
             folder=recording.folder_id,
             has_transcript=has_transcript,
             has_summary=has_summary,
+            media_type=media_type,
         )
 
 
@@ -204,3 +214,13 @@ class RecordingMove(BaseModel):
     """What a client sends to file a recording under another folder."""
 
     folder: str = Field(description=_FOLDER_REF)
+
+
+class RecordingRename(BaseModel):
+    """What a client sends to give a recording another name.
+
+    Only the name travels: where the recording sits is a move, which is its
+    own request, and nothing else about it is the client's to set.
+    """
+
+    name: str = Field(min_length=1, description="New name to show.")

@@ -1,9 +1,6 @@
 """Transcription and diarization done by Gemini, one piece of audio at a time.
 
-Google Cloud Speech-to-Text does not diarize Italian — it accepts the config,
-ignores it, and credits every word to the same speaker — so the voices are
-told apart by a model that listens to the audio instead of by a recogniser
-that refuses to. Gemini reads the whole clip, writes what was said, and says
+Gemini reads the whole clip, writes what was said, and says
 which voice said it.
 
 Nothing is sent whole. A meeting goes up in pieces of a few minutes each,

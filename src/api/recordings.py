@@ -13,6 +13,11 @@ work to a background task and returns at once. What happened is then read from
 the status, which is why the single recording is fetchable on its own: it is
 what the client polls while the pipeline runs.
 
+What was uploaded is served back as well, and twice: as a stream a player
+can seek inside, which is what makes a transcript worth clicking on, and as
+an archive of the whole recording folder, which is everything the pipeline
+ever wrote about it in one file.
+
 The two steps are also two endpoints. Transcribing is what costs minutes and
 money; summarising reads what it left behind. Keeping them apart is what lets
 a recording whose summary failed be offered another summary — over the
@@ -22,6 +27,8 @@ transcript already stored — instead of a whole run from the audio.
 import logging
 import mimetypes
 import re
+import tempfile
+import zipfile
 from collections.abc import Callable
 from functools import partial
 from pathlib import Path
@@ -38,11 +45,14 @@ from fastapi import (
     UploadFile,
     status,
 )
+from fastapi.responses import FileResponse
+from starlette.background import BackgroundTask
 
 from api.dependencies import Memory, Pipeline
 from api.schemas import (
     RecordingMove,
     RecordingOut,
+    RecordingRename,
     SummaryOut,
     TranscriptOut,
     folder_ref,
@@ -55,13 +65,22 @@ from connectors.memory_connector import (
     Recording,
     RecordingStatus,
 )
-from core import SUMMARY_JSON, TRANSCRIPT_JSON
+from core import (
+    ARTIFACTS,
+    MEDIA_BASENAME,
+    SUMMARY_JSON,
+    TRANSCRIPT_JSON,
+    media_filename,
+)
 
 logger = logging.getLogger(__name__)
 
-MEDIA_BASENAME = "recording"
-
 _SUFFIX_PATTERN = re.compile(r"\A\.[A-Za-z0-9]{1,10}\Z")
+
+_UNSAFE_IN_FILENAME = re.compile(r"[^\w \-.]+")
+"""What is taken out of a name before it is offered as a file name."""
+
+_FALLBACK_TYPE = "application/octet-stream"
 
 router = APIRouter(prefix="/recordings", tags=["recordings"])
 
@@ -108,7 +127,7 @@ def upload_recording(
 
     recording = memory.create_recording(name, folder_id=folder_ref(folder))
     try:
-        memory.save_file(recording.id, _media_filename(file), file.file)
+        memory.save_file(recording.id, _upload_filename(file), file.file)
     except BaseException:
         memory.delete_recording(recording.id)
         raise
@@ -415,6 +434,139 @@ def read_summary(pipeline: Pipeline, recording_id: str) -> SummaryOut:
     return SummaryOut.from_summary(summary, title=recording.name)
 
 
+@router.get(
+    "/{recording_id}/media",
+    response_class=FileResponse,
+    summary="Stream the media of a recording",
+)
+def stream_media(memory: Memory, recording_id: str) -> FileResponse:
+    """Serve the stored media, seekable, for a player to read.
+
+    The bytes are served from disk with their range headers intact, which is
+    what lets a player jump to a timestamp without pulling the whole file
+    first — the point of the whole endpoint, since the transcript is read by
+    clicking on it.
+
+    Nothing is attached: the file is meant to be played where it is, not
+    saved. Saving it is what the archive is for.
+
+    Args:
+        memory: Storage the recording lives in.
+        recording_id: Recording whose media is served.
+
+    Returns:
+        The media file, as it was uploaded.
+
+    Raises:
+        HTTPException: 404 if the recording does not exist, or holds no media.
+    """
+    memory.get_recording(recording_id)
+    name = media_filename(memory, recording_id)
+    if name is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No media stored for that recording.",
+        )
+    return FileResponse(
+        memory.recording_dir(recording_id) / name, media_type=_media_type(name)
+    )
+
+
+@router.get(
+    "/{recording_id}/download",
+    response_class=FileResponse,
+    summary="Download everything stored with a recording",
+)
+def download_recording(memory: Memory, recording_id: str) -> FileResponse:
+    """Hand back the recording folder as one zip archive.
+
+    Everything the folder holds travels: the media as it was uploaded, and
+    whatever the pipeline wrote next to it. The names inside the archive are
+    the ones on disk, under a folder named after the recording, so unpacking
+    it twice never spills two recordings into each other.
+
+    The archive is built into a temporary file rather than streamed: it lets
+    the answer carry its length, so a browser can show how far along the
+    download is, and the file is removed once the response has been sent.
+
+    Args:
+        memory: Storage the recording lives in.
+        recording_id: Recording to hand back.
+
+    Returns:
+        A zip archive of the whole recording folder.
+
+    Raises:
+        HTTPException: 404 if the recording does not exist, or nothing is
+            stored with it yet.
+    """
+    recording = memory.get_recording(recording_id)
+    stored = memory.list_files(recording_id)
+    if not stored:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Nothing is stored with that recording yet.",
+        )
+
+    directory = memory.recording_dir(recording_id)
+    stem = _archive_stem(recording)
+    handle = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
+    archive_path = Path(handle.name)
+    try:
+        with handle, zipfile.ZipFile(handle, "w") as archive:
+            for name in stored:
+                archive.write(
+                    directory / name,
+                    arcname=f"{stem}/{name}",
+                    # Only what the pipeline wrote is text; deflating media
+                    # that is already compressed costs time and saves nothing.
+                    compress_type=(
+                        zipfile.ZIP_DEFLATED
+                        if name in ARTIFACTS
+                        else zipfile.ZIP_STORED
+                    ),
+                )
+    except BaseException:
+        archive_path.unlink(missing_ok=True)
+        raise
+
+    return FileResponse(
+        archive_path,
+        media_type="application/zip",
+        filename=f"{stem}.zip",
+        background=BackgroundTask(archive_path.unlink, missing_ok=True),
+    )
+
+
+@router.patch(
+    "/{recording_id}",
+    response_model=RecordingOut,
+    summary="Rename a recording",
+)
+def rename_recording(
+    memory: Memory, recording_id: str, payload: RecordingRename
+) -> RecordingOut:
+    """Give a recording another name.
+
+    Only the index changes: the folder holding the media is named after the
+    identifier, so a rename never touches a file and can be done while the
+    pipeline is running on it.
+
+    Args:
+        memory: Storage the recording lives in.
+        recording_id: Recording to rename.
+        payload: The new name.
+
+    Returns:
+        The recording as it now stands.
+
+    Raises:
+        HTTPException: 404 if the recording does not exist, 400 if the name is
+            empty or holds a path separator.
+    """
+    return _out(memory, memory.rename_recording(recording_id, payload.name))
+
+
 @router.patch(
     "/{recording_id}/folder",
     response_model=RecordingOut,
@@ -479,10 +631,12 @@ def _out(memory: MemoryConnector, recording: Recording) -> RecordingOut:
     files are the truth, and they are what tells a summary that failed apart
     from a transcription that never ran.
     """
+    stored = media_filename(memory, recording.id)
     return RecordingOut.from_recording(
         recording,
         has_transcript=memory.has_file(recording.id, TRANSCRIPT_JSON),
         has_summary=memory.has_file(recording.id, SUMMARY_JSON),
+        media_type=None if stored is None else _media_type(stored),
     )
 
 
@@ -520,6 +674,29 @@ def _run(work: Callable[[], object], recording_id: str, step: str) -> None:
         logger.exception("%s failed for recording %s", step, recording_id)
 
 
+def _media_type(filename: str) -> str:
+    """Return what a stored file is served as, guessed from its name.
+
+    The type of the upload is not kept anywhere, and the extension is: it is
+    what the pipeline already tells audio from video with, so it is what the
+    player is told as well.
+    """
+    return mimetypes.guess_type(filename)[0] or _FALLBACK_TYPE
+
+
+def _archive_stem(recording: Recording) -> str:
+    """Name the archive after the recording, safely.
+
+    A name is free text and lands here in a header a client will save a file
+    under, so anything that is not a letter, a digit or ordinary punctuation
+    is replaced. The extension of the media it usually carries is dropped —
+    the archive is not that file — and a name left with nothing usable falls
+    back to the identifier, which is always a valid name.
+    """
+    cleaned = _UNSAFE_IN_FILENAME.sub("_", Path(recording.name).stem).strip(" .")
+    return cleaned or recording.id
+
+
 def _ensure_media(upload: UploadFile) -> None:
     """Reject an upload that is neither audio nor video.
 
@@ -545,7 +722,7 @@ def _content_type(upload: UploadFile) -> str:
     return (mimetypes.guess_type(upload.filename or "")[0] or "").lower()
 
 
-def _media_filename(upload: UploadFile) -> str:
+def _upload_filename(upload: UploadFile) -> str:
     """Return the name the media file takes inside the recording folder.
 
     The extension of the upload is kept, so the file stays playable and the

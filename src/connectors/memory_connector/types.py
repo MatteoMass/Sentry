@@ -45,6 +45,7 @@ had certainly reached.
 """
 
 MAX_FOLDER_NAME_LENGTH: Final = 128
+MAX_RECORDING_NAME_LENGTH: Final = 256
 
 _FORBIDDEN_IN_NAME: Final = ("/", "\\", "\x00")
 
@@ -98,6 +99,10 @@ class InvalidFolderMove(MemoryConnectorError):
 
 class InvalidFolderName(MemoryConnectorError):
     """Raised when a folder name is empty or holds a path separator."""
+
+
+class InvalidRecordingName(MemoryConnectorError):
+    """Raised when a recording name is empty or holds a path separator."""
 
 
 class BlobNotFound(MemoryConnectorError):
@@ -190,6 +195,32 @@ def validate_status(status: str) -> None:
         raise ValueError(
             f"Invalid status: {status!r}. Expected one of: {RECORDING_STATUSES}"
         )
+
+
+def normalize_recording_name(name: str) -> str:
+    """Return a recording name stripped of its surrounding spaces.
+
+    The name is what the recording is called, never where its files sit: those
+    live under the identifier, so renaming moves nothing. Separators are
+    refused all the same, since the name is what a download is offered under
+    and a name holding one would be read as a path there.
+
+    Raises:
+        InvalidRecordingName: If the name is empty, too long, or holds a
+            separator.
+    """
+    cleaned = name.strip()
+    if not cleaned:
+        raise InvalidRecordingName("A recording name cannot be empty.")
+    if len(cleaned) > MAX_RECORDING_NAME_LENGTH:
+        raise InvalidRecordingName(
+            f"Name too long: at most {MAX_RECORDING_NAME_LENGTH} characters."
+        )
+    if any(character in cleaned for character in _FORBIDDEN_IN_NAME):
+        raise InvalidRecordingName(f"Invalid recording name: {name!r}")
+    if cleaned in {".", ".."}:
+        raise InvalidRecordingName(f"Invalid recording name: {name!r}")
+    return cleaned
 
 
 def normalize_folder_name(name: str) -> str:

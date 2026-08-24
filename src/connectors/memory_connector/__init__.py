@@ -20,6 +20,7 @@ from connectors.memory_connector.types import (
     InvalidFolderMove,
     InvalidFolderName,
     InvalidKey,
+    InvalidRecordingName,
     MemoryConnectorError,
     Recording,
     RecordingAlreadyExists,
@@ -27,6 +28,7 @@ from connectors.memory_connector.types import (
     RecordingStatus,
     new_folder_id,
     new_recording_id,
+    normalize_recording_name,
 )
 
 __all__ = [
@@ -46,6 +48,7 @@ __all__ = [
     "InvalidFolderMove",
     "InvalidFolderName",
     "InvalidKey",
+    "InvalidRecordingName",
     "MemoryConnector",
     "MemoryConnectorError",
     "Recording",
@@ -56,4 +59,5 @@ __all__ = [
     "RecordingStatus",
     "new_folder_id",
     "new_recording_id",
+    "normalize_recording_name",
 ]

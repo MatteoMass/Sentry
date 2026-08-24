@@ -253,6 +253,10 @@ class MemoryConnector:
             status=status, folder_id=wanted, limit=limit, offset=offset
         )
 
+    def rename_recording(self, recording_id: str, name: str) -> Recording:
+        """Give a recording another name. See :meth:`RecordingIndex.rename`."""
+        return self.index.rename(recording_id, name)
+
     def move_recording(self, recording_id: str, folder_id: str | None) -> Recording:
         """File a recording under another folder, leaving its media in place."""
         return self.index.move(recording_id, folder_id)

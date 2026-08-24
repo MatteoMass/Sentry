@@ -51,25 +51,4 @@ onMounted(() => field.value?.focus());
   background: none;
   cursor: default;
 }
-
-.field {
-  width: 100%;
-  user-select: text;
-  min-width: 0;
-  padding: 0.05rem 0.3rem;
-  border: 1px solid var(--accent);
-  border-radius: calc(var(--radius) - 2px);
-  background: var(--surface);
-  color: var(--text);
-  font: inherit;
-  font-weight: 400;
-}
-
-.field:focus {
-  outline: none;
-}
-
-.field:disabled {
-  opacity: 0.6;
-}
 </style>

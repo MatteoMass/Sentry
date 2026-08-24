@@ -28,12 +28,14 @@ from core.audio import (
 from core.gemini_speech import GeminiSpeechToText, Voice
 from core.pipeline import (
     ARTIFACTS,
+    MEDIA_BASENAME,
     SUMMARY_JSON,
     SUMMARY_MARKDOWN,
     TRANSCRIPT_JSON,
     TRANSCRIPT_TEXT,
     ProcessingPipeline,
     ProcessingResult,
+    media_filename,
 )
 from core.speech import SpeechToText
 from core.summarizer import Summarizer
@@ -53,6 +55,7 @@ __all__ = [
     "ARTIFACTS",
     "DEFAULT_ENCODINGS",
     "FLAC",
+    "MEDIA_BASENAME",
     "OGG_OPUS",
     "SUMMARY_JSON",
     "SUMMARY_MARKDOWN",
@@ -74,6 +77,7 @@ __all__ = [
     "TranscriptionError",
     "Utterance",
     "Voice",
+    "media_filename",
     "prepare_audio",
     "probe_duration",
     "speaker_label",

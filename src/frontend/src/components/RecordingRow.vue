@@ -5,7 +5,9 @@
  */
 import { computed } from "vue";
 
+import { downloadRecording } from "@/api/client";
 import type { Recording } from "@/api/types";
+import RenameField from "@/components/RenameField.vue";
 import { indent } from "@/components/sidebar";
 import { useConfirm } from "@/composables/useConfirm";
 import { useContextMenu } from "@/composables/useContextMenu";
@@ -21,6 +23,8 @@ const {
   startDrag,
   endDrag,
   beginDraft,
+  beginRename,
+  isRenaming,
   upload,
   removeRecording,
 } = useLibrary();
@@ -40,9 +44,14 @@ function onDragStart(event: DragEvent): void {
   }
 }
 
-/** A right click here is about the folder holding it, as in a file manager. */
+/**
+ * A right click offers what can be done to the recording, and under it what
+ * can be added to the folder holding it, as in a file manager.
+ */
 function onContextMenu(event: MouseEvent): void {
   open(event, [
+    { label: "Rename", run: () => beginRename("recording", props.recording.id) },
+    { label: "Download", run: () => downloadRecording(props.recording.id) },
     { label: "New folder", run: () => beginDraft(props.recording.folder) },
     { label: "Upload recording…", run: () => void uploadHere() },
     { label: "Delete recording…", danger: true, run: () => void confirmDelete() },
@@ -77,7 +86,7 @@ async function confirmDelete(): Promise<void> {
       class="row row--recording"
       role="button"
       tabindex="0"
-      draggable="true"
+      :draggable="!isRenaming('recording', props.recording.id)"
       :class="{
         'row--selected': props.recording.id === selectedId,
         'row--dragging': carried,
@@ -91,7 +100,12 @@ async function confirmDelete(): Promise<void> {
       @dragstart="onDragStart"
       @dragend="endDrag"
     >
-      <span class="label">{{ props.recording.name }}</span>
+      <RenameField
+        v-if="isRenaming('recording', props.recording.id)"
+        :current="props.recording.name"
+        label="Name of the recording"
+      />
+      <span v-else class="label">{{ props.recording.name }}</span>
     </div>
   </li>
 </template>

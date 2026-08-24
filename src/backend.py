@@ -24,6 +24,7 @@ from connectors.memory_connector import (
     InvalidFolderMove,
     InvalidFolderName,
     InvalidKey,
+    InvalidRecordingName,
     MemoryConnector,
     MemoryConnectorError,
     RecordingNotFound,
@@ -108,7 +109,8 @@ async def folder_conflict(
 
 @app.exception_handler(InvalidFolderMove)
 @app.exception_handler(InvalidFolderName)
-async def invalid_folder(
+@app.exception_handler(InvalidRecordingName)
+async def invalid_change(
     request: Request, error: MemoryConnectorError
 ) -> JSONResponse:
     """Turn an impossible move, or an unusable name, into a 400."""

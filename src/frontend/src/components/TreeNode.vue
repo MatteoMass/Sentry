@@ -13,6 +13,7 @@ import { computed, onBeforeUnmount, watch } from "vue";
 
 import FolderDraft from "@/components/FolderDraft.vue";
 import RecordingRow from "@/components/RecordingRow.vue";
+import RenameField from "@/components/RenameField.vue";
 import { describe, HOVER_OPEN_MS, indent } from "@/components/sidebar";
 import { useConfirm } from "@/composables/useConfirm";
 import { useContextMenu } from "@/composables/useContextMenu";
@@ -29,6 +30,8 @@ const {
   expand,
   beginDraft,
   isDrafting,
+  beginRename,
+  isRenaming,
   upload,
   startDrag,
   endDrag,
@@ -116,6 +119,7 @@ function onDrop(event: DragEvent): void {
 
 function onContextMenu(event: MouseEvent): void {
   open(event, [
+    { label: "Rename", run: () => beginRename("folder", id.value) },
     { label: "New folder inside", run: () => beginDraft(id.value) },
     { label: "Upload recording here…", run: () => void uploadHere() },
     { label: "Delete folder…", danger: true, run: () => void confirmDelete() },
@@ -165,7 +169,7 @@ async function confirmDelete(): Promise<void> {
       class="row row--folder"
       role="button"
       tabindex="0"
-      draggable="true"
+      :draggable="!isRenaming('folder', id)"
       :class="{ 'row--drop': highlighted, 'row--dragging': carried }"
       :style="{ paddingLeft: indent(props.depth) }"
       :aria-expanded="isOpen(id)"
@@ -178,7 +182,12 @@ async function confirmDelete(): Promise<void> {
       @dragend="endDrag"
     >
       <span class="chevron" :class="{ 'chevron--open': isOpen(id) }">›</span>
-      <span class="label">{{ props.node.folder!.name }}</span>
+      <RenameField
+        v-if="isRenaming('folder', id)"
+        :current="props.node.folder!.name"
+        label="Name of the folder"
+      />
+      <span v-else class="label">{{ props.node.folder!.name }}</span>
       <span v-if="props.node.recordings.length" class="count">
         {{ props.node.recordings.length }}
       </span>

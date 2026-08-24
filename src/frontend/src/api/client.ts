@@ -192,6 +192,54 @@ export function moveFolder(folderId: string, parent: string | null): Promise<Fol
   });
 }
 
+/** Give a recording another name, leaving it where it is. */
+export function renameRecording(recordingId: string, name: string): Promise<Recording> {
+  return request<Recording>(`/recordings/${encodeURIComponent(recordingId)}`, {
+    method: "PATCH",
+    body: { name },
+  });
+}
+
+/** Give a folder another name, leaving it where it is. */
+export function renameFolder(folderId: string, name: string): Promise<Folder> {
+  return request<Folder>(`/folders/${encodeURIComponent(folderId)}`, {
+    method: "PATCH",
+    body: { name },
+  });
+}
+
+/**
+ * Where the media of a recording is served from.
+ *
+ * The player is handed the URL rather than the bytes: the browser asks for
+ * the ranges it needs, which is what lets it jump to a timestamp in a file
+ * it has not downloaded.
+ */
+export function mediaUrl(recordingId: string): string {
+  return `/recordings/${encodeURIComponent(recordingId)}/media`;
+}
+
+/** Where the whole recording folder is served from, as one zip archive. */
+export function archiveUrl(recordingId: string): string {
+  return `/recordings/${encodeURIComponent(recordingId)}/download`;
+}
+
+/**
+ * Ask the browser to save the archive of a recording.
+ *
+ * The request is left to the browser rather than fetched here: the file is
+ * as large as the media inside it, and nothing is gained by holding a copy
+ * of it in memory on the way to the disk.
+ */
+export function downloadRecording(recordingId: string): void {
+  const link = document.createElement("a");
+  link.href = archiveUrl(recordingId);
+  link.download = "";
+  document.body.append(link);
+  link.click();
+  link.remove();
+}
+
 /** File a recording under another folder. */
 export function moveRecording(
   recordingId: string,

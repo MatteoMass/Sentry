@@ -17,6 +17,7 @@ from connectors.memory_connector.types import (
     RecordingNotFound,
     RecordingStatus,
     new_recording_id,
+    normalize_recording_name,
     validate_status,
 )
 
@@ -191,6 +192,35 @@ class RecordingIndex:
             cursor = connection.execute(
                 "UPDATE recordings SET status = ? WHERE id = ?",
                 (status, recording_id),
+            )
+            if cursor.rowcount == 0:
+                raise RecordingNotFound(f"No such recording: {recording_id!r}")
+        return self.get(recording_id)
+
+    def rename(self, recording_id: str, name: str) -> Recording:
+        """Give a recording another name.
+
+        Nothing on disk is touched: the folder holding the media is named
+        after the identifier, which a rename never changes. Two recordings may
+        carry the same name — they usually do, when the same file is uploaded
+        twice — so nothing is checked beyond the name itself.
+
+        Args:
+            recording_id: Recording to rename.
+            name: New name, stripped of its surrounding spaces.
+
+        Returns:
+            The recording as it now stands.
+
+        Raises:
+            InvalidRecordingName: If the name is empty or holds a separator.
+            RecordingNotFound: If no row matches ``recording_id``.
+        """
+        cleaned = normalize_recording_name(name)
+        with self.database.transaction() as connection:
+            cursor = connection.execute(
+                "UPDATE recordings SET name = ? WHERE id = ?",
+                (cleaned, recording_id),
             )
             if cursor.rowcount == 0:
                 raise RecordingNotFound(f"No such recording: {recording_id!r}")

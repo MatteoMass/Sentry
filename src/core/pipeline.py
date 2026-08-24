@@ -334,25 +334,13 @@ class ProcessingPipeline:
     def media_path(self, recording_id: str) -> Path:
         """Return the media file of a recording.
 
-        The upload endpoint stores it as ``recording.<ext>``, so that name
-        wins; anything else in the folder that the pipeline did not write is
-        taken as the media, which keeps a hand placed file working.
-
         Raises:
             MediaNotFound: If the folder holds nothing but artifacts.
         """
-        candidates = [
-            name for name in self.memory.list_files(recording_id)
-            if name not in ARTIFACTS
-        ]
-        if not candidates:
+        name = media_filename(self.memory, recording_id)
+        if name is None:
             raise MediaNotFound(f"No media stored for recording {recording_id!r}.")
-
-        chosen = next(
-            (name for name in candidates if Path(name).stem == MEDIA_BASENAME),
-            candidates[0],
-        )
-        return self.memory.recording_dir(recording_id) / chosen
+        return self.memory.recording_dir(recording_id) / name
 
     def _failed(self, recording_id: str) -> None:
         """Record that the running step is over and went wrong.
@@ -383,6 +371,32 @@ class ProcessingPipeline:
     def __repr__(self) -> str:
         """Return a debug representation showing the storage behind it."""
         return f"{type(self).__name__}(memory={self.memory!r})"
+
+
+def media_filename(memory: MemoryConnector, recording_id: str) -> str | None:
+    """Return the name the media of a recording is stored under.
+
+    The upload endpoint stores it as ``recording.<ext>``, so that name wins;
+    anything else in the folder that the pipeline did not write is taken as
+    the media, which keeps a hand placed file working.
+
+    It lives here rather than on the pipeline because it answers a question
+    the storage alone can settle, and one the API asks of recordings it is
+    not processing — to play them, or to hand them back.
+
+    Returns:
+        The name, relative to the recording folder, or ``None`` when the
+        folder holds nothing but what the pipeline wrote.
+    """
+    candidates = [
+        name for name in memory.list_files(recording_id) if name not in ARTIFACTS
+    ]
+    if not candidates:
+        return None
+    return next(
+        (name for name in candidates if Path(name).stem == MEDIA_BASENAME),
+        candidates[0],
+    )
 
 
 def _read[T](

@@ -25,6 +25,8 @@ import {
   moveFolder,
   moveRecording,
   processRecording,
+  renameFolder,
+  renameRecording,
   summarizeRecording,
   transcribeRecording,
   uploadRecording,
@@ -40,9 +42,12 @@ export interface TreeNode {
   recordings: Recording[];
 }
 
+/** What a folder and a recording are told apart by, wherever both are meant. */
+export type ItemKind = "folder" | "recording";
+
 /** Something the sidebar can pick up and file somewhere else. */
 export interface DragItem {
-  kind: "folder" | "recording";
+  kind: ItemKind;
   id: string;
 }
 
@@ -86,6 +91,10 @@ const POLL_TIMEOUT = 30 * 60 * 1000;
 /** Where a new folder is being named, and whether it is on its way. */
 const draft = ref<Destination | null>(null);
 const drafting = ref(false);
+
+/** Which row of the sidebar is being renamed, and whether it is on its way. */
+const renaming = ref<DragItem | null>(null);
+const savingName = ref(false);
 
 /** What is being dragged, and the folder it is currently held over. */
 const dragged = ref<DragItem | null>(null);
@@ -216,6 +225,92 @@ async function commitDraft(name: string): Promise<void> {
     actionError.value = message(cause);
   } finally {
     drafting.value = false;
+  }
+}
+
+// ---------------------------------------------------------------- renaming
+
+/**
+ * Give a folder or a recording another name.
+ *
+ * Nothing else about it changes — a rename is one row on the server, and one
+ * row here: what comes back is swapped in place, so the sidebar and the panel
+ * both follow without asking for anything again.
+ *
+ * Returns:
+ *   True when the name was taken, false when the server turned it down —
+ *   which is what tells the caller whether to close the field it was typed
+ *   in or leave it open to be fixed.
+ */
+async function rename(kind: ItemKind, id: string, name: string): Promise<boolean> {
+  try {
+    if (kind === "recording") {
+      swap(await renameRecording(id, name));
+    } else {
+      const renamed = await renameFolder(id, name);
+      folders.value = folders.value.map((folder) =>
+        folder.id === renamed.id ? renamed : folder,
+      );
+    }
+    actionError.value = null;
+    return true;
+  } catch (cause) {
+    actionError.value = message(cause);
+    return false;
+  }
+}
+
+/**
+ * Turn a row of the sidebar into the field its name is typed in.
+ *
+ * The row is edited where it stands, as a file manager does, so the tree
+ * never jumps and what is being renamed is never in doubt.
+ */
+function beginRename(kind: ItemKind, id: string): void {
+  actionError.value = null;
+  cancelDraft();
+  renaming.value = { kind, id };
+}
+
+function cancelRename(): void {
+  renaming.value = null;
+}
+
+/** True when this row is the one being renamed. */
+function isRenaming(kind: ItemKind, id: string): boolean {
+  return renaming.value?.kind === kind && renaming.value.id === id;
+}
+
+/**
+ * Take the name that was typed, unless it is empty or unchanged.
+ *
+ * A refused name — one a sibling folder already carries — leaves the field
+ * open with what was typed still in it, so it can be fixed rather than typed
+ * again.
+ */
+async function commitRename(name: string): Promise<void> {
+  const target = renaming.value;
+  if (target === null || savingName.value) {
+    return;
+  }
+
+  const cleaned = name.trim();
+  const current =
+    target.kind === "recording"
+      ? recordings.value.find((recording) => recording.id === target.id)?.name
+      : byId.value.get(target.id)?.name;
+  if (cleaned === "" || cleaned === current) {
+    cancelRename();
+    return;
+  }
+
+  savingName.value = true;
+  try {
+    if (await rename(target.kind, target.id, cleaned)) {
+      renaming.value = null;
+    }
+  } finally {
+    savingName.value = false;
   }
 }
 
@@ -589,6 +684,8 @@ export function useLibrary() {
     selectedId: readonly(selectedId),
     dragged: readonly(dragged),
     drafting: readonly(drafting),
+    renaming: readonly(renaming),
+    savingName: readonly(savingName),
     uploads: readonly(uploads),
     selected,
     selectedPath,
@@ -603,6 +700,11 @@ export function useLibrary() {
     cancelDraft,
     commitDraft,
     isDrafting,
+    rename,
+    beginRename,
+    cancelRename,
+    commitRename,
+    isRenaming,
     upload,
     process,
     transcribe,
