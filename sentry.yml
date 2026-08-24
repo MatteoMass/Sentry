@@ -64,6 +64,11 @@ transcription:
   # How many times a piece is tried before the recording is given up on.
   #                                     SENTRY_TRANSCRIPTION_ATTEMPTS
   attempts: 2
+  # Room the model is given to answer in. A piece whose transcript does not
+  # fit comes back cut in half, and is then sent again as two shorter pieces;
+  # raising this is what keeps that from happening.
+  #                                     SENTRY_TRANSCRIPTION_MAX_OUTPUT_TOKENS
+  max_output_tokens: 32768
 
 # How the media is re-encoded before it travels.
 audio:
