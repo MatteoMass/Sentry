@@ -1,0 +1,68 @@
+# Two ways of using the image.
+#
+#   docker compose up --build            build the frontend into the image and
+#                                        serve everything on :8016
+#   docker compose --profile build run --rm frontend-build
+#                                        only run the frontend build, and leave
+#                                        the result in ./src/frontend/dist so a
+#                                        local `./build_and_run.sh --no-build`
+#                                        can serve it
+
+services:
+  sentry:
+    build:
+      context: .
+      target: runtime
+    image: sentry:latest
+    ports:
+      - "${SENTRY_PORT:-8016}:8016"
+    # GEMINI_API_KEY and anything else secret. The file has to exist; copy
+    # example.env to .env if it does not.
+    env_file:
+      - .env
+    environment:
+      # `sentry.yml` is mounted below for the settings that are worth
+      # editing without a rebuild; these are the few the container has to
+      # decide for itself, and a variable always wins over the file.
+      SENTRY_HOST: 0.0.0.0
+      SENTRY_PORT: 8016
+      SENTRY_STORAGE_ROOT: /app/data
+      SENTRY_FRONTEND_DIST: /app/src/frontend/dist
+      SENTRY_FFMPEG: /usr/bin/ffmpeg
+      SENTRY_FFPROBE: /usr/bin/ffprobe
+    volumes:
+      # Recordings and the database outlive the container.
+      - ./data:/app/data
+      # Read-only: the settings are edited on the host and picked up by a
+      # restart, never written back by the service.
+      - ./sentry.yml:/app/sentry.yml:ro
+    restart: unless-stopped
+    healthcheck:
+      # No dedicated health route, so the cheapest real one answers for the
+      # process; python is in the image and curl is not.
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen("http://127.0.0.1:8016/folders")
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+  # The frontend build on its own, writing into the checkout. Only runs when
+  # asked for by name, which is what the profile is for.
+  frontend-build:
+    profiles: ["build"]
+    image: node:22-alpine
+    working_dir: /app/src/frontend
+    volumes:
+      - ./src/frontend:/app/src/frontend
+      # The container keeps its own node_modules: the host one is built for
+      # macOS, and esbuild and rollup ship platform binaries that would not
+      # run here.
+      - frontend-node-modules:/app/src/frontend/node_modules
+    command: sh -c "npm ci && npm run build"
+
+volumes:
+  frontend-node-modules:

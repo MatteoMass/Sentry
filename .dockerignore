@@ -1,0 +1,31 @@
+# Everything the build does not need, and everything it would rather build
+# itself than inherit from the checkout.
+
+.git/
+.gitignore
+.github/
+
+# Rebuilt inside the image; copying them in would shadow the build and, for
+# node_modules, carry macOS binaries into a Linux one.
+**/node_modules/
+src/frontend/dist/
+.venv/
+**/__pycache__/
+*.py[cod]
+
+# Recordings and the database: they belong in a volume, not in a layer.
+data/
+
+# Secrets stay out of the image; pass them at run time.
+.env
+
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+.vscode/
+.idea/
+.DS_Store
+
+Dockerfile
+docker-compose.yml
+.dockerignore
