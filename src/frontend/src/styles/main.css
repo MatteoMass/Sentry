@@ -1,0 +1,189 @@
+/* Tokens and the handful of rules shared by every component. */
+
+:root {
+  --surface: #ffffff;
+  --surface-sunken: #f6f7f9;
+  --surface-hover: #eceef2;
+  --border: #e2e5ea;
+  --text: #14171c;
+  --text-muted: #6b7280;
+  --accent: #3b6ef6;
+  --accent-soft: #e6edfe;
+  --accent-text: #ffffff;
+
+  --status-to-process: #8a94a6;
+  --status-running: #b7791f;
+  --status-transcribed: #2b6cb0;
+  --status-processed: #2f855a;
+  --status-error: #c53030;
+  /* Legible on the error colour, which is light in the dark theme. */
+  --status-error-text: #ffffff;
+
+  --radius: 6px;
+  --sidebar-width: 300px;
+
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --surface: #16181d;
+    --surface-sunken: #101216;
+    --surface-hover: #22252c;
+    --border: #2a2e37;
+    --text: #e7e9ee;
+    --text-muted: #939aa8;
+    --accent: #5b86ff;
+    --accent-soft: #1e2740;
+    --accent-text: #ffffff;
+
+    --status-to-process: #7c8496;
+    --status-running: #d69e2e;
+    --status-transcribed: #63b3ed;
+    --status-processed: #48bb78;
+    --status-error: #fc8181;
+    --status-error-text: #16181d;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--surface-sunken);
+  color: var(--text);
+  font-family:
+    "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica,
+    Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+/* A message standing in for content that is not there yet. */
+.placeholder {
+  display: grid;
+  place-content: center;
+  gap: 0.5rem;
+  height: 100%;
+  padding: 2rem;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+/* ------------------------------------------------------------ sidebar rows
+
+   Folders, recordings and the row a new folder is named in are drawn by three
+   different components but are one thing on screen, so their look is kept
+   here: a modifier defined next to the base cannot be beaten by the scoped
+   rules of whichever component happens to load last. */
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: 100%;
+  padding: 0.3rem 0.6rem 0.3rem 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  user-select: none;
+}
+
+.row:hover {
+  background: var(--surface-hover);
+}
+
+.row--folder {
+  font-weight: 500;
+}
+
+.row--recording {
+  color: var(--text-muted);
+}
+
+.row--selected,
+.row--selected:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 500;
+}
+
+/* The row being carried, still in place until the drop lands. */
+.row--dragging {
+  opacity: 0.45;
+}
+
+/* The folder the drop would land in. */
+.row--drop,
+.row--drop:hover {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+
+/* The row a name is typed in, whether the thing exists yet or not. */
+.field {
+  width: 100%;
+  min-width: 0;
+  padding: 0.05rem 0.3rem;
+  border: 1px solid var(--accent);
+  border-radius: calc(var(--radius) - 2px);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-weight: 400;
+  user-select: text;
+}
+
+.field:focus {
+  outline: none;
+}
+
+.field:disabled {
+  opacity: 0.6;
+}
+
+.label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chevron {
+  flex: none;
+  width: 0.8rem;
+  color: var(--text-muted);
+  transition: transform 120ms ease;
+}
+
+.chevron--open {
+  transform: rotate(90deg);
+}
+
+.count {
+  margin-left: auto;
+  padding-left: 0.4rem;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-weight: 400;
+}

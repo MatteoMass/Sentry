@@ -1,0 +1,96 @@
+# The file is read once, when the server starts. An environment variable of
+# the same setting wins over it, so a container passing its own values keeps
+# them; the variable is named next to each key.
+#
+# Secrets are not here. GEMINI_API_KEY lives in `.env`, or in the environment
+# of whatever starts the service — see `example.env`.
+
+# Where things live. Relative paths are read against the directory the server
+# was started in, which `build_and_run.sh` makes the root of the project.
+paths:
+  # Database and recording folders.               SENTRY_STORAGE_ROOT
+  storage_root: ./data
+  # Built frontend, mounted at `/`.               SENTRY_FRONTEND_DIST
+  frontend_dist: src/frontend/dist
+  # ffmpeg and ffprobe, when they are not on the PATH.
+  #                                               SENTRY_FFMPEG / SENTRY_FFPROBE
+  ffmpeg: /opt/homebrew/bin/ffmpeg
+  ffprobe: /opt/homebrew/bin/ffprobe
+
+# How the service is exposed. `run.sh` reads the address from here; its
+# `--host` and `--port` flags still overrule it.
+server:
+  # 0.0.0.0 accepts from the network.             SENTRY_HOST
+  host: 127.0.0.1
+  # Port the server listens on.                        SENTRY_PORT
+  port: 8016                                  
+  # Origins allowed to call the API from a browser. Empty installs no CORS at
+  # all, which is right while the same process serves the frontend; the Vite
+  # dev server is the usual reason to fill it in.
+  #                                               SENTRY_CORS_ORIGINS
+  cors_origins:
+    - http://localhost:5173
+  # Largest recording accepted, in MiB. Absent accepts whatever arrives.
+  #                                               SENTRY_MAX_UPLOAD_MB
+  max_upload_mb: 512
+
+logging:
+  # DEBUG, INFO, WARNING, ERROR.                  SENTRY_LOG_LEVEL
+  level: INFO
+
+# How the audio is transcribed and diarized.
+transcription:
+  # Model that does the listening.                SENTRY_TRANSCRIPTION_MODEL
+  model: gemini-3.1-flash-lite
+  # Language the recordings are expected in, as a BCP-47 tag. It is a hint:
+  # the transcript records whatever is actually spoken.
+  #                                               SENTRY_TRANSCRIPTION_LANGUAGE
+  language: it-IT
+  # How long each piece of audio sent to the model lasts. Shorter pieces
+  # answer faster and time out less; longer ones leave fewer seams where a
+  # voice could be given a new number.
+  #                                     SENTRY_TRANSCRIPTION_CHUNK_MINUTES
+  chunk_minutes: 5
+  # How much of the previous piece travels with each request so the voices can
+  # be matched across the seam. 0 sends none of it.
+  #                                     SENTRY_TRANSCRIPTION_CONTEXT_SECONDS
+  context_seconds: 20
+  # Ceiling on the audio of one request, in MiB. The bytes travel base64
+  # encoded, which inflates them by a third, so this sits under the one the
+  # API documents.                      SENTRY_TRANSCRIPTION_MAX_INLINE_MB
+  max_inline_mb: 12
+  # How long one request may take.      SENTRY_TRANSCRIPTION_TIMEOUT
+  timeout_seconds: 600
+  # How many times a piece is tried before the recording is given up on.
+  #                                     SENTRY_TRANSCRIPTION_ATTEMPTS
+  attempts: 2
+
+# How the media is re-encoded before it travels.
+audio:
+  # Every recognition model is trained at 16 kHz.  SENTRY_AUDIO_SAMPLE_RATE
+  sample_rate: 16000
+  # Tried in order; the first that fits the request is the one that is sent.
+  # `flac` loses nothing, `opus` fits roughly five times more audio.
+  #                                                SENTRY_AUDIO_ENCODINGS
+  encodings: [flac, opus]
+  # Bitrate of the Opus fallback.                  SENTRY_AUDIO_OPUS_BITRATE
+  opus_bitrate: 24k
+
+# How the transcript is distilled into what is worth remembering.
+summarization:
+  # Model that does the summarization.  SENTRY_SUMMARY_MODEL
+  model: gemini-3.1-flash-lite                   
+  # A low temperature keeps the summary close to what was said.
+  #                                                SENTRY_SUMMARY_TEMPERATURE
+  temperature: 0.2
+  # Longest dialogue sent in one go, past which the tail is dropped.
+  #                                             SENTRY_SUMMARY_MAX_CHARACTERS
+  max_characters: 400000
+  # Upper bound on the answer. Absent leaves it to the provider.
+  #                                          SENTRY_SUMMARY_MAX_OUTPUT_TOKENS
+  max_output_tokens: 2048
+
+pipeline:
+  # Start the whole pipeline as soon as a recording is uploaded, instead of
+  # waiting for `POST /recordings/{id}/process`.   SENTRY_AUTO_PROCESS
+  auto_process_on_upload: false
