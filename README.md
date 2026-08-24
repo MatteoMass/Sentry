@@ -6,6 +6,7 @@
 ![Vue 3](https://img.shields.io/badge/Vue_3-4FC08D?style=flat-square&logo=vuedotjs&logoColor=white)
 ![Gemini](https://img.shields.io/badge/Gemini-8E75B2?style=flat-square&logo=googlegemini&logoColor=white)
 [![Docker](https://img.shields.io/badge/Docker-ready-2496ED?style=flat-square&logo=docker&logoColor=white)](Dockerfile)
+[![Built with Claude Code](https://img.shields.io/badge/built_with-Claude_Code-D97757?style=flat-square&logo=claude&logoColor=white)](https://claude.com/claude-code)
 
 Sentry listens to your recordings so you don't have to listen to them twice.
 
