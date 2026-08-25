@@ -8,6 +8,10 @@
 [![Docker](https://img.shields.io/badge/Docker-ready-2496ED?style=flat-square&logo=docker&logoColor=white)](Dockerfile)
 [![Built with Claude Code](https://img.shields.io/badge/built_with-Claude_Code-D97757?style=flat-square&logo=claude&logoColor=white)](https://claude.com/claude-code)
 
+<p align="center">
+  <img src="assets/readme_image.png" alt="Sentry — a griffin in headphones reading a diarized transcript" width="320">
+</p>
+
 Sentry listens to your recordings so you don't have to listen to them twice.
 
 A meeting, a call, a voice memo: an hour of talk that holds maybe five
