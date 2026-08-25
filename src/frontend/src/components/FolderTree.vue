@@ -103,7 +103,10 @@ function onDrop(event: DragEvent): void {
 <template>
   <aside class="sidebar">
     <header class="header">
-      <h1 class="title">Sentry</h1>
+      <div class="brand">
+        <img class="logo" src="/favicon.png" alt="" />
+        <h1 class="title">Sentry</h1>
+      </div>
       <div class="actions">
         <button class="action" title="Add" @click="onAdd">＋</button>
         <button class="action" :disabled="loading" title="Reload" @click="refresh">
@@ -182,6 +185,18 @@ function onDrop(event: DragEvent): void {
   border-bottom: 1px solid var(--border);
 }
 
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.logo {
+  width: 1.35rem;
+  height: 1.35rem;
+  border-radius: 0.3rem;
+  flex-shrink: 0;
+}
 .title {
   margin: 0;
   font-size: 0.95rem;
