@@ -21,6 +21,8 @@
 
   --radius: 6px;
   --sidebar-width: 300px;
+  /* What is left of the sidebar folded away: room for the hawk alone. */
+  --sidebar-rail: 3.25rem;
 
   color-scheme: light dark;
 }

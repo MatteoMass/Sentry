@@ -19,7 +19,10 @@ onMounted(refresh);
 </template>
 
 <style scoped>
+/* The tree is drawn over the recording, not beside it, on a window too narrow
+   to hold both — so it is positioned against this. */
 .layout {
+  position: relative;
   display: flex;
   height: 100%;
 }
