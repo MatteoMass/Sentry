@@ -75,12 +75,34 @@ The notes half is yours and the pipeline never touches it: a note and its
 attachments survive every run, including one that transcribes the audio from
 scratch, and they travel in the archive when the recording is downloaded.
 
+## Asking instead of reading
+
+A transcript answers everything and says nothing: what somebody wants from an
+hour of talk is usually one sentence, and finding it by reading is the work
+worth skipping. Two things in the app do that.
+
+The **search** walks the dialogue. Every line holding the words is marked
+where it stands — the transcript is never filtered down to what matches,
+because a line is worth reading with the ones around it — and the arrows step
+between them without moving the player.
+
+**Ask Sentry** is the tab that asks. A question goes to the model with the
+recording behind it, and what the recording contributes is yours to choose,
+because it is what the call costs: the summary is a page, the transcript is a
+book, and the source is the whole hour of audio re-encoded and uploaded again
+**on every turn**. The first two are on, the third is off and asks before it
+goes on.
+
+Nothing about a conversation is stored, on either side. It lives in the
+browser and travels whole with every question, so leaving the tab ends it —
+which is the honest behaviour for something nobody is paying to keep.
+
 ## Requirements
 
 - Python ≥ 3.14 and [Poetry](https://python-poetry.org/)
 - Node.js ≥ 20 and npm — only to build the frontend
 - ffmpeg and ffprobe on the PATH (or named in `sentry.yml`)
-- A Gemini API key, for the transcription and the summary
+- A Gemini API key, for the transcription, the summary and the questions
 
 Docker needs none of them: the image brings its own.
 
@@ -196,8 +218,9 @@ that hides which something it is.
   never asks whether a recording is registered, which is what lets a folder be
   opened, copied or backed up with ordinary tools.
 - **`genai_connectors/`** is the generative provider behind a vendor-agnostic
-  surface — `generate`, `stream`, a `Message`, a token count. Gemini is the
-  only implementation there is; it is not the only one the code allows.
+  surface — `generate`, `stream`, a `Message` that can carry media, a token
+  count. Gemini is the only implementation there is; it is not the only one
+  the code allows.
 
 ### Core — `src/core/`
 
@@ -206,9 +229,9 @@ The business logic: from a stored recording to what it was about.
 an entrypoint needs to know. Inside: `audio` cuts and re-encodes with ffmpeg,
 `speech` is the contract a speech-to-text backend answers to and
 `gemini_speech` the one implementation, `summarizer` distils the transcript,
-`prompts` is the catalogue of the system prompts and of the overrides stored
-for them, and `notes` is the human half of a recording's folder. The layer
-knows nothing of HTTP.
+`chat` answers what is asked about a recording, `prompts` is the catalogue of
+the system prompts and of the overrides stored for them, and `notes` is the
+human half of a recording's folder. The layer knows nothing of HTTP.
 
 ### Backend — `src/backend.py`, `src/api/`, `src/config.py`
 
@@ -223,8 +246,9 @@ into status codes — so no endpoint has to. The endpoints themselves are in
 | `/recordings`                   | Upload, list, rename, move, delete, download an archive. |
 | `/recordings/{id}/process`      | Run the pipeline — or just `/transcribe`, `/summarize`.  |
 | `/recordings/{id}/transcript`, `/summary`, `/media` | What came out of it.         |
+| `/recordings/{id}/chat`         | Ask a question about it, over what you choose to send.   |
 | `/recordings/{id}/notes`        | The note and its attachments.                            |
-| `/prompts`                      | Read, rewrite and reset the two system prompts.          |
+| `/prompts`                      | Read, rewrite and reset the system prompts.              |
 
 `config.py` assembles the settings once, when it is imported, out of the three
 layers described below.
@@ -232,10 +256,11 @@ layers described below.
 ### Frontend — `src/frontend/`
 
 Vue 3, Vite and TypeScript. Two panes: the folder tree with the recordings on
-the left, the details of the selected one in the middle — transcript, summary,
-note, attachments, and the buttons that start the pipeline. `src/api/` is the
-only place that talks HTTP, `src/composables/` holds the shared state, and
-`src/styles/main.css` the tokens for both themes. It has its own
+the left, the details of the selected one in the middle — the player, the
+buttons that start the pipeline, and four tabs beside them: the summary, the
+searchable transcript, Ask Sentry, and the note with its attachments.
+`src/api/` is the only place that talks HTTP, `src/composables/` holds the
+shared state, and `src/styles/main.css` the tokens for both themes. It has its own
 [README](src/frontend/README.md).
 
 The build lands in `dist/`, which the API mounts at `/` when it is there. The
@@ -268,6 +293,7 @@ read is reported and the layer below answers instead.
 | `transcription` | Which model listens, the language it is told to expect, how long each piece of audio is, how much of the previous piece travels with it, the ceiling on one request, the timeout and how many times a piece is retried. |
 | `audio`         | Sample rate, the encodings tried in order — `flac` loses nothing, `opus` fits roughly five times more audio — and the bitrate of the lossy one. |
 | `summarization` | Which model writes, how freely (`temperature`), how much transcript it is given, and the cap on its answer.               |
+| `chat`          | Which model answers a question about a recording, how freely, how much transcript travels with it, the cap on the answer, and the ceiling on the audio when the source is sent. |
 | `pipeline`      | Whether an upload starts processing by itself instead of waiting to be asked.                                             |
 
 Every key in `sentry.yml` is documented in place, with its default and the
@@ -279,9 +305,9 @@ is read from the environment alone, which is what [`.env`](example.env) is
 for; `SENTRY_ENV_FILE` says where to read that from when it is not the `.env`
 at the root.
 
-The two prompts are configured in neither file. They are stored in the
-database and rewritten from the app itself, so an edit reaches the next run
-without a restart, and the default stays untouched underneath: resetting a
+The three prompts — transcription, summary, Ask Sentry — are configured in
+neither file. They are stored in the database and rewritten from the app
+itself, so an edit reaches the next call without a restart, and the default stays untouched underneath: resetting a
 prompt is a delete, and an improved default reaches every installation that
 never disagreed with it.
 

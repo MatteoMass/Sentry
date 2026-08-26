@@ -35,6 +35,10 @@ class SummarizationError(CoreError):
     """Raised when the model does not return a summary that can be read."""
 
 
+class ChatError(CoreError):
+    """Raised when a question asked about a recording cannot be answered."""
+
+
 def format_timestamp(seconds: float) -> str:
     """Return ``seconds`` as ``HH:MM:SS``, for a timestamp a human reads."""
     whole = int(seconds)

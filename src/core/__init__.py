@@ -33,6 +33,7 @@ from core.audio import (
     probe_duration,
     split_audio,
 )
+from core.chat import Chat
 from core.gemini_speech import GeminiSpeechToText, Voice
 from core.notes import (
     ATTACHMENTS_DIR,
@@ -60,6 +61,7 @@ from core.pipeline import (
     media_filename,
 )
 from core.prompts import (
+    CHAT,
     PROMPTS,
     SUMMARIZATION,
     TRANSCRIPTION,
@@ -75,6 +77,7 @@ from core.speech import SpeechToText
 from core.summarizer import Summarizer
 from core.types import (
     AudioError,
+    ChatError,
     CoreError,
     MediaNotFound,
     SummarizationError,
@@ -88,6 +91,7 @@ from core.types import (
 __all__ = [
     "ARTIFACTS",
     "ATTACHMENTS_DIR",
+    "CHAT",
     "DEFAULT_ENCODINGS",
     "FLAC",
     "MEDIA_BASENAME",
@@ -102,6 +106,8 @@ __all__ = [
     "TRANSCRIPT_TEXT",
     "Attachment",
     "AudioError",
+    "Chat",
+    "ChatError",
     "CoreError",
     "Encoding",
     "GeminiSpeechToText",

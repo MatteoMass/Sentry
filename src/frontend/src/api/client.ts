@@ -9,6 +9,8 @@
 import { ROOT } from "@/api/types";
 import type {
   Attachment,
+  ChatAsk,
+  ChatReply,
   Folder,
   Note,
   Prompt,
@@ -320,7 +322,21 @@ export function deleteFolder(folderId: string, recursive: boolean): Promise<void
   );
 }
 
-/** List the system prompts of the pipeline, in the order the steps run them. */
+/**
+ * Ask Sentry a question about a recording.
+ *
+ * Nothing about the conversation is kept on either side: it travels whole
+ * with every question, together with whatever the asker chose to send of the
+ * recording itself.
+ */
+export function askSentry(recordingId: string, ask: ChatAsk): Promise<ChatReply> {
+  return request<ChatReply>(`/recordings/${encodeURIComponent(recordingId)}/chat`, {
+    method: "POST",
+    body: ask,
+  });
+}
+
+/** List the system prompts Sentry runs on, the two pipeline steps first. */
 export function fetchPrompts(): Promise<Prompt[]> {
   return request<Prompt[]>("/prompts");
 }

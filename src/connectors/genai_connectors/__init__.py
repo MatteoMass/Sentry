@@ -7,6 +7,19 @@ importing one.
 """
 
 from connectors.genai_connectors.base import GenAIConnector
-from connectors.genai_connectors.types import CompletionResponse, Message, Role, Usage
+from connectors.genai_connectors.types import (
+    CompletionResponse,
+    Media,
+    Message,
+    Role,
+    Usage,
+)
 
-__all__ = ["CompletionResponse", "GenAIConnector", "Message", "Role", "Usage"]
+__all__ = [
+    "CompletionResponse",
+    "GenAIConnector",
+    "Media",
+    "Message",
+    "Role",
+    "Usage",
+]

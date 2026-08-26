@@ -50,6 +50,8 @@ from starlette.background import BackgroundTask
 
 from api.dependencies import Memory, Pipeline
 from api.schemas import (
+    ChatAsk,
+    ChatReply,
     RecordingMove,
     RecordingOut,
     RecordingRename,
@@ -58,6 +60,7 @@ from api.schemas import (
     folder_ref,
 )
 from config import settings
+from connectors.genai_connectors import Message
 from connectors.memory_connector import (
     ANY_FOLDER,
     RUNNING_STATUSES,
@@ -72,6 +75,8 @@ from core import (
     NOTES_FILE,
     SUMMARY_JSON,
     TRANSCRIPT_JSON,
+    CoreError,
+    MediaNotFound,
     has_notes,
     media_filename,
 )
@@ -454,6 +459,77 @@ def read_summary(pipeline: Pipeline, recording_id: str) -> SummaryOut:
             detail="No summary stored for that recording.",
         )
     return SummaryOut.from_summary(summary, title=recording.name)
+
+
+@router.post(
+    "/{recording_id}/chat",
+    response_model=ChatReply,
+    summary="Ask a question about a recording",
+)
+def ask_about_recording(
+    pipeline: Pipeline, recording_id: str, payload: ChatAsk
+) -> ChatReply:
+    """Answer a question about a recording, over what was chosen to send.
+
+    Nothing is stored and nothing is remembered: the conversation arrives
+    whole with every question, and what the recording contributes to it is
+    read from disk here and thrown away again once the answer is back.
+
+    The three flags are the client's to set because they are what the call
+    costs. A question sent with the source carries the whole recording
+    re-encoded as audio, every time it is asked.
+
+    Args:
+        pipeline: Processing pipeline, which knows where the results are kept
+            and which model answers.
+        recording_id: Recording being asked about.
+        payload: The conversation, and what of the recording travels with it.
+
+    Returns:
+        The answer, with the model that wrote it and what it was billed.
+
+    Raises:
+        HTTPException: 400 if the conversation does not end with a question,
+            409 if the source was asked for and no media is stored, 502 if
+            the model cannot be reached or refuses to answer.
+    """
+    recording = pipeline.memory.get_recording(recording_id)
+
+    if payload.messages[-1].role != "user":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The conversation must end with the question to answer.",
+        )
+
+    source = None
+    if payload.source:
+        try:
+            source = pipeline.media_path(recording_id)
+        except MediaNotFound as error:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail=str(error)
+            ) from error
+
+    try:
+        answer = pipeline.chat.ask(
+            [
+                Message(role=turn.role, content=turn.content)
+                for turn in payload.messages
+            ],
+            name=recording.name,
+            transcript=(
+                pipeline.read_transcript(recording_id) if payload.transcript else None
+            ),
+            summary=pipeline.read_summary(recording_id) if payload.summary else None,
+            source=source,
+        )
+    except CoreError as error:
+        logger.warning("Question about %s went unanswered: %s", recording_id, error)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)
+        ) from error
+
+    return ChatReply.from_completion(answer)
 
 
 @router.get(

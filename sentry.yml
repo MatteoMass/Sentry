@@ -95,6 +95,25 @@ summarization:
   #                                          SENTRY_SUMMARY_MAX_OUTPUT_TOKENS
   max_output_tokens: 2048
 
+# How a question asked about a recording is answered, in the Ask Sentry tab.
+chat:
+  # Model that answers.                            SENTRY_CHAT_MODEL
+  model: gemini-3.1-flash-lite
+  # Above the summariser's: an answer is allowed to be a sentence rather than
+  # a heading, and still says only what the recording says.
+  #                                                SENTRY_CHAT_TEMPERATURE
+  temperature: 0.4
+  # Longest dialogue sent with a question, past which the tail is dropped.
+  #                                             SENTRY_CHAT_MAX_CHARACTERS
+  max_characters: 400000
+  # Upper bound on the answer. Absent leaves it to the provider.
+  #                                          SENTRY_CHAT_MAX_OUTPUT_TOKENS
+  max_output_tokens: 2048
+  # Ceiling on the audio sent when the recording itself is asked for, in MiB.
+  # A recording above it is re-encoded to Opus rather than refused.
+  #                                             SENTRY_CHAT_MAX_SOURCE_MB
+  max_source_mb: 12
+
 pipeline:
   # Start the whole pipeline as soon as a recording is uploaded, instead of
   # waiting for `POST /recordings/{id}/process`.   SENTRY_AUTO_PROCESS

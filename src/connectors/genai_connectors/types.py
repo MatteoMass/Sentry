@@ -14,16 +14,42 @@ Role = Literal["user", "assistant"]
 
 
 @dataclass(frozen=True, slots=True)
+class Media:
+    """A file travelling with a message: audio, an image, a document.
+
+    The bytes are carried as they are meant to be read, encoding included:
+    what fits in one request, and in which codec, is decided long before a
+    connector sees them.
+
+    Attributes:
+        content: The encoded bytes.
+        mime_type: What the provider is told they are, e.g. ``'audio/flac'``.
+    """
+
+    content: bytes = field(repr=False)
+    mime_type: str
+
+    def __len__(self) -> int:
+        """Return the size of the payload in bytes."""
+        return len(self.content)
+
+
+@dataclass(frozen=True, slots=True)
 class Message:
     """One turn of a conversation, from either side.
 
     Attributes:
         role: Who is speaking — the user, or the model answering.
         content: What was said, as plain text.
+        media: Files sent with the turn, none for a plain text one. Only a
+            connector over a provider that reads them can carry them, which
+            is the caller's to know: the audio of a recording is worth the
+            bytes only where something can listen to it.
     """
 
     role: Role
     content: str
+    media: tuple[Media, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

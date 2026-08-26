@@ -134,6 +134,47 @@ export interface Note {
   attachments: Attachment[];
 }
 
+/** Who said a turn of a conversation held about a recording. */
+export type ChatRole = "user" | "assistant";
+
+/** One turn of that conversation. */
+export interface ChatTurn {
+  role: ChatRole;
+  content: string;
+}
+
+/**
+ * What the recording contributes to a question asked about it.
+ *
+ * The three cost wildly different amounts — the summary is a page, the
+ * transcript is a book, the source is the whole hour of audio re-encoded and
+ * sent again on every turn — which is why they are three switches and not
+ * one.
+ */
+export interface ChatContext {
+  transcript: boolean;
+  summary: boolean;
+  source: boolean;
+}
+
+/**
+ * What a client sends to ask Sentry about a recording.
+ *
+ * The whole conversation travels with every question: nothing about it is
+ * stored, so what the model knows of it is exactly what is sent.
+ */
+export interface ChatAsk extends ChatContext {
+  messages: ChatTurn[];
+}
+
+/** What the model answered, and what the answer cost. */
+export interface ChatReply {
+  text: string;
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+}
+
 /** A folder as the API exposes it. */
 export interface Folder {
   id: string;

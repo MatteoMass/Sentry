@@ -31,9 +31,10 @@ from connectors.memory_connector import (
     Recording,
     RecordingStatus,
 )
+from core.chat import Chat
 from core.gemini_speech import GeminiSpeechToText
 from core.notes import is_note_file
-from core.prompts import SUMMARIZATION, TRANSCRIPTION, prompt_text
+from core.prompts import CHAT, SUMMARIZATION, TRANSCRIPTION, prompt_text
 from core.speech import SpeechToText
 from core.summarizer import Summarizer
 from core.types import (
@@ -76,7 +77,7 @@ class ProcessingResult:
 class ProcessingPipeline:
     """Transcribes and summarises the recordings held by a connector.
 
-    The two backends are built on first use, so a pipeline can be constructed
+    The backends are built on first use, so a pipeline can be constructed
     where no API key is set — at application startup, say — and only fail when
     it is actually asked to do something. They are also built around the
     prompts stored at that moment (:mod:`core.prompts`), and built again once
@@ -95,6 +96,7 @@ class ProcessingPipeline:
         *,
         transcriber: SpeechToText | None = None,
         summarizer: Summarizer | None = None,
+        chat: Chat | None = None,
     ) -> None:
         """Bind the pipeline to a storage, and optionally to given backends.
 
@@ -106,16 +108,22 @@ class ProcessingPipeline:
             summarizer: Summariser. When ``None`` a default
                 :class:`Summarizer` is built on first use, steered by the
                 stored summarization prompt.
+            chat: Backend answering questions asked about a recording. When
+                ``None`` a default :class:`Chat` is built on first use,
+                steered by the stored chat prompt.
         """
         self.memory = memory
         self._transcriber = transcriber
         self._summarizer = summarizer
+        self._chat = chat
         self._built_transcriber = transcriber is None
         self._built_summarizer = summarizer is None
+        self._built_chat = chat is None
         # The prompts the backends built here were steered by, so that one
         # rewritten since can be told apart from one that never changed.
         self._transcriber_prompt: str | None = None
         self._summarizer_prompt: str | None = None
+        self._chat_prompt: str | None = None
 
     @property
     def transcriber(self) -> SpeechToText:
@@ -154,6 +162,23 @@ class ProcessingPipeline:
             self._summarizer = Summarizer(system_prompt=wanted)
             self._summarizer_prompt = wanted
         return self._summarizer
+
+    @property
+    def chat(self) -> Chat:
+        """The backend answering questions, built on first use when not given.
+
+        It is not a step and nothing here ever calls it: it is kept beside
+        the two that are because it is steered by a stored prompt in exactly
+        the same way, and rebuilt when that prompt is rewritten.
+        """
+        if self._chat is not None and not self._built_chat:
+            return self._chat
+
+        wanted = prompt_text(self.memory, CHAT)
+        if self._chat is None or self._chat_prompt != wanted:
+            self._chat = Chat(system_prompt=wanted)
+            self._chat_prompt = wanted
+        return self._chat
 
     # ---------------------------------------------------------- the pipeline
 

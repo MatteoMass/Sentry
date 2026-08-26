@@ -14,6 +14,9 @@ from api.recordings import router as recordings_router
 from api.schemas import (
     ROOT,
     AttachmentOut,
+    ChatAsk,
+    ChatReply,
+    ChatTurn,
     FolderCreate,
     FolderOut,
     FolderUpdate,
@@ -33,6 +36,9 @@ from api.schemas import (
 __all__ = [
     "ROOT",
     "AttachmentOut",
+    "ChatAsk",
+    "ChatReply",
+    "ChatTurn",
     "FolderCreate",
     "FolderOut",
     "FolderUpdate",

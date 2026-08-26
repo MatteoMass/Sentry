@@ -1,11 +1,12 @@
-"""The system prompts the pipeline runs on, and the ones the user rewrote.
+"""The system prompts Sentry runs on, and the ones the user rewrote.
 
-Each step of the pipeline is steered by one system prompt, and both of them
-ship with a default written next to the code that uses it —
+Every model call Sentry makes is steered by one system prompt, and each ships
+with a default written next to the code that uses it —
 :data:`core.gemini_speech.SYSTEM_PROMPT` for the transcription,
-:data:`core.summarizer.SYSTEM_PROMPT` for the summary. This module is the
-catalogue of those prompts, and the one place that knows a user may have
-replaced one.
+:data:`core.summarizer.SYSTEM_PROMPT` for the summary,
+:data:`core.chat.SYSTEM_PROMPT` for the questions asked about a recording.
+This module is the catalogue of those prompts, and the one place that knows a
+user may have replaced one.
 
 An edited prompt is stored as a setting, and only as a setting: the default
 stays where it is, untouched, so resetting is a delete and an improved default
@@ -17,11 +18,13 @@ therefore "the override if there is one, the default otherwise", which is
 from dataclasses import dataclass
 
 from connectors.memory_connector import MemoryConnector
+from core.chat import SYSTEM_PROMPT as CHAT_DEFAULT
 from core.gemini_speech import SYSTEM_PROMPT as TRANSCRIPTION_DEFAULT
 from core.summarizer import SYSTEM_PROMPT as SUMMARIZATION_DEFAULT
 
 TRANSCRIPTION = "transcription"
 SUMMARIZATION = "summarization"
+CHAT = "chat"
 
 SETTING_PREFIX = "prompt."
 """What a prompt key looks like among the other settings."""
@@ -68,8 +71,17 @@ PROMPTS: tuple[Prompt, ...] = (
         ),
         default=SUMMARIZATION_DEFAULT,
     ),
+    Prompt(
+        id=CHAT,
+        title="Ask Sentry",
+        description=(
+            "Steers the chat: how a question asked about a recording is"
+            " answered, and what an answer may claim."
+        ),
+        default=CHAT_DEFAULT,
+    ),
 )
-"""Every prompt there is, in the order the pipeline runs them."""
+"""Every prompt there is: the two steps first, in the order they run."""
 
 _BY_ID = {prompt.id: prompt for prompt in PROMPTS}
 

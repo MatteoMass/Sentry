@@ -7,7 +7,7 @@
  * itself, and going back is one step up it.
  *
  * The prompts are fetched when the dialog opens and kept afterwards: they are
- * two rows, they only change when this dialog changes them, and a reopened
+ * three rows, they only change when this dialog changes them, and a reopened
  * dialog that redraws instantly is worth more than a guaranteed fresh read.
  */
 

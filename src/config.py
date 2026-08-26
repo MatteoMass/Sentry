@@ -213,6 +213,39 @@ class Summarization:
 
 
 @dataclass(frozen=True, slots=True)
+class Chat:
+    """How a question asked about a recording is answered.
+
+    Attributes:
+        model: Model that answers.
+        temperature: Sampling temperature. It sits above the summariser's: an
+            answer is allowed to be a sentence rather than a heading, and
+            still says only what the recording says.
+        max_characters: Longest dialogue sent with a question, past which the
+            tail is dropped, so a pathological transcript degrades into a
+            partly informed answer instead of a rejected request.
+        max_output_tokens: Upper bound on the answer. ``None`` leaves it to
+            the provider.
+        max_source_mb: Ceiling on the audio sent when the recording itself is
+            asked for, in mebibytes. As with the transcription, the bytes
+            travel base64 encoded, so this sits under the limit the API
+            documents; a recording above it is re-encoded to Opus rather than
+            refused.
+    """
+
+    model: str = "gemini-3.1-flash-lite"
+    temperature: float = 0.4
+    max_characters: int = 400_000
+    max_output_tokens: int | None = None
+    max_source_mb: float = 12.0
+
+    @property
+    def max_source_bytes(self) -> int:
+        """The ceiling on the audio of one question, in bytes."""
+        return int(self.max_source_mb * 1024 * 1024)
+
+
+@dataclass(frozen=True, slots=True)
 class Pipeline:
     """What happens to a recording without anybody asking.
 
@@ -236,6 +269,7 @@ class Settings:
         transcription: How the audio is transcribed.
         audio: How the audio is encoded.
         summarization: How the summary is written.
+        chat: How a question asked about a recording is answered.
         pipeline: What runs by itself.
         gemini_api_key: The key the provider is called with, read from the
             environment alone. ``None`` when none is set, which is not fatal:
@@ -250,6 +284,7 @@ class Settings:
     transcription: Transcription = field(default_factory=Transcription)
     audio: Audio = field(default_factory=Audio)
     summarization: Summarization = field(default_factory=Summarization)
+    chat: Chat = field(default_factory=Chat)
     pipeline: Pipeline = field(default_factory=Pipeline)
     gemini_api_key: str | None = field(default=None, repr=False)
     config_file: Path | None = None
@@ -263,6 +298,7 @@ SECTIONS = (
     "transcription",
     "audio",
     "summarization",
+    "chat",
     "pipeline",
 )
 """Top level keys the file may hold; anything else is a typo worth saying so."""
@@ -402,6 +438,7 @@ def build_settings(document: dict[str, Any]) -> Settings:
         transcription=_transcription(document),
         audio=_audio(document),
         summarization=_summarization(document),
+        chat=_chat(document),
         pipeline=_pipeline(document),
         gemini_api_key=os.getenv(API_KEY_ENV) or os.getenv(FALLBACK_API_KEY_ENV),
     )
@@ -528,6 +565,35 @@ def _summarization(document: dict[str, Any]) -> Summarization:
     )
 
 
+def _chat(document: dict[str, Any]) -> Chat:
+    """Resolve the ``chat`` section."""
+    section, fallback = _section(document, "chat"), Chat()
+    return Chat(
+        model=section.read("model", "SENTRY_CHAT_MODEL", _text, fallback.model),
+        temperature=section.read(
+            "temperature", "SENTRY_CHAT_TEMPERATURE", _number, fallback.temperature
+        ),
+        max_characters=section.read(
+            "max_characters",
+            "SENTRY_CHAT_MAX_CHARACTERS",
+            _count,
+            fallback.max_characters,
+        ),
+        max_output_tokens=section.read(
+            "max_output_tokens",
+            "SENTRY_CHAT_MAX_OUTPUT_TOKENS",
+            _count,
+            fallback.max_output_tokens,
+        ),
+        max_source_mb=section.read(
+            "max_source_mb",
+            "SENTRY_CHAT_MAX_SOURCE_MB",
+            _positive,
+            fallback.max_source_mb,
+        ),
+    )
+
+
 def _pipeline(document: dict[str, Any]) -> Pipeline:
     """Resolve the ``pipeline`` section."""
     section, fallback = _section(document, "pipeline"), Pipeline()
@@ -642,6 +708,7 @@ def load_settings() -> Settings:
         transcription=resolved.transcription,
         audio=resolved.audio,
         summarization=resolved.summarization,
+        chat=resolved.chat,
         pipeline=resolved.pipeline,
         gemini_api_key=resolved.gemini_api_key,
         config_file=config_file,

@@ -1,11 +1,12 @@
 """Payloads exchanged over HTTP."""
 
 from datetime import datetime
-from typing import Final
+from typing import Final, Literal
 from urllib.parse import quote
 
 from pydantic import BaseModel, Field
 
+from connectors.genai_connectors import CompletionResponse
 from connectors.memory_connector import Folder, Recording, RecordingStatus
 from core import Attachment, Prompt, Summary, Transcript, Utterance, speaker_label
 
@@ -320,6 +321,68 @@ class PromptOut(BaseModel):
             text=text,
             default=prompt.default,
             customized=text != prompt.default,
+        )
+
+
+class ChatTurn(BaseModel):
+    """One turn of a conversation held about a recording."""
+
+    role: Literal["user", "assistant"] = Field(
+        description="Who said it: the person asking, or the model answering."
+    )
+    content: str = Field(min_length=1, description="What was said.")
+
+
+class ChatAsk(BaseModel):
+    """What a client sends to ask Sentry about a recording.
+
+    The whole conversation travels with every question: nothing about it is
+    stored, so what the model knows of it is exactly what arrives here.
+
+    The three flags decide what the recording contributes, and they cost
+    wildly different amounts: the summary is a page, the transcript is a
+    book, and the source is the whole hour of audio re-encoded and sent
+    again — on every turn. Which is why the last one is off unless it is
+    asked for.
+    """
+
+    messages: list[ChatTurn] = Field(
+        min_length=1,
+        description="The exchange so far, ending with the question to answer.",
+    )
+    transcript: bool = Field(
+        default=True, description="Send the stored transcript with the question."
+    )
+    summary: bool = Field(
+        default=True, description="Send the stored summary with the question."
+    )
+    source: bool = Field(
+        default=False,
+        description="Send the recording itself as audio. This is the expensive one.",
+    )
+
+
+class ChatReply(BaseModel):
+    """What the model answered, and what the answer cost.
+
+    The tokens travel because the client is the one deciding how much of the
+    recording to send next time, and a number is a better argument than a
+    warning.
+    """
+
+    text: str = Field(description="The answer.")
+    model: str = Field(description="Model that wrote it.")
+    input_tokens: int = Field(description="Tokens the question was billed for.")
+    output_tokens: int = Field(description="Tokens the answer was billed for.")
+
+    @classmethod
+    def from_completion(cls, response: CompletionResponse) -> ChatReply:
+        """Build the payload from what the connector answered."""
+        return cls(
+            text=response.text.strip(),
+            model=response.model,
+            input_tokens=response.usage.input_tokens,
+            output_tokens=response.usage.output_tokens,
         )
 
 

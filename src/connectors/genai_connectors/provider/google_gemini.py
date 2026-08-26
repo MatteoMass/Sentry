@@ -118,10 +118,21 @@ class GeminiConnector(GenAIConnector):
 
     @staticmethod
     def _to_contents(messages: Sequence[Message]) -> list[genai_types.Content]:
+        # What is attached goes before what is said about it: Gemini reads a
+        # question asked after the media it is about more reliably than one
+        # asked before it.
         return [
             genai_types.Content(
                 role=_ROLE_MAP[message.role],
-                parts=[genai_types.Part.from_text(text=message.content)],
+                parts=[
+                    *(
+                        genai_types.Part.from_bytes(
+                            data=media.content, mime_type=media.mime_type
+                        )
+                        for media in message.media
+                    ),
+                    genai_types.Part.from_text(text=message.content),
+                ],
             )
             for message in messages
         ]

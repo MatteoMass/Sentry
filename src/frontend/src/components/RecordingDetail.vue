@@ -14,10 +14,16 @@
  * the same gesture as hearing it. What the whole folder holds can be taken
  * away in one archive, media and results together.
  *
- * The last of the three tabs is the one the pipeline has nothing to do with:
- * what somebody wants to remember about the recording, and the screenshots
- * they want to remember it next to. It is written here and stored in the same
- * folder, which is why it survives a recording being processed again.
+ * The dialogue is also searched here. An hour of talk is a wall of text, and
+ * the line somebody is after is usually one they can half quote: the search
+ * marks every line holding it and walks between them, without the media
+ * moving unless a line is clicked.
+ *
+ * The last two tabs are the ones the pipeline has nothing to do with: a
+ * conversation held with the model about the recording, which is asked for a
+ * question at a time and kept nowhere, and what somebody wants to remember
+ * about it — written here and stored in the same folder, which is why it
+ * survives a recording being processed again.
  */
 import { computed, nextTick, ref, watch } from "vue";
 
@@ -41,6 +47,7 @@ import type {
   Transcript,
   Utterance,
 } from "@/api/types";
+import AskSentry from "@/components/AskSentry.vue";
 import StatusBadge from "@/components/StatusBadge.vue";
 import { useConfirm } from "@/composables/useConfirm";
 import { pickAttachments } from "@/composables/useFilePicker";
@@ -465,8 +472,8 @@ const uploadedAt = computed(() => {
 
 // -------------------------------------------------------------------- tabs
 
-/** Which of the three the right-hand pane is showing. */
-type Tab = "summary" | "transcript" | "notes";
+/** Which of the four the right-hand pane is showing. */
+type Tab = "summary" | "transcript" | "ask" | "notes";
 
 const tab = ref<Tab>("summary");
 
@@ -474,13 +481,15 @@ const tab = ref<Tab>("summary");
  * The tabs, in the order they are worth reading.
  *
  * The summary comes first because it is what somebody opening a recording
- * again is after; the dialogue it was written from is behind it, and what a
- * person added by hand behind that. Only the note carries a mark, since the
- * other two are already said by the steps on the left.
+ * again is after; the dialogue it was written from is behind it, then what
+ * can be asked about the two, and what a person added by hand behind that.
+ * Only the note carries a mark, since the rest is already said by the steps
+ * on the left.
  */
 const tabs = computed(() => [
   { id: "summary" as Tab, label: "Summary", mark: false },
   { id: "transcript" as Tab, label: "Transcription", mark: false },
+  { id: "ask" as Tab, label: "Ask Sentry", mark: false },
   { id: "notes" as Tab, label: "Notes", mark: hasNote.value },
 ]);
 
@@ -498,6 +507,113 @@ watch(
   },
   { immediate: true },
 );
+
+// ------------------------------------------------- searching the dialogue
+
+/**
+ * What is being looked for in the transcript, and which hit is stood on.
+ *
+ * The search never filters the dialogue down to what matches: a line is worth
+ * reading with the ones around it, and a transcript cut to four sentences
+ * loses the thing it is read for. Every hit is marked where it stands, and
+ * the arrows walk between them.
+ */
+const query = ref("");
+const hit = ref(0);
+
+/** Where the dialogue is drawn, so a hit can be brought into view. */
+const dialogueBox = ref<HTMLElement | null>(null);
+
+/** The lines holding what is being looked for, in the order they are read. */
+const hits = computed(() => {
+  const needle = query.value.trim().toLowerCase();
+  if (needle === "") {
+    return [];
+  }
+  return (transcript.value?.utterances ?? []).flatMap((utterance, index) =>
+    utterance.text.toLowerCase().includes(needle) ? [index] : [],
+  );
+});
+
+/** The line the search stands on, or -1 when it stands on none. */
+const found = computed(() => hits.value[hit.value] ?? -1);
+
+/** Where the search is, said the way a search box says it. */
+const tally = computed(() => {
+  if (query.value.trim() === "") {
+    return "";
+  }
+  return hits.value.length === 0
+    ? "No match"
+    : `${hit.value + 1} / ${hits.value.length}`;
+});
+
+/**
+ * Split a line around what is being looked for, so every hit can be marked.
+ *
+ * The pieces carry the text as it was written, not as it was matched: the
+ * search ignores case, and a line must still read the way it was spoken.
+ */
+function marked(text: string): { text: string; hit: boolean }[] {
+  const needle = query.value.trim();
+  if (needle === "") {
+    return [{ text, hit: false }];
+  }
+
+  const pieces: { text: string; hit: boolean }[] = [];
+  const haystack = text.toLowerCase();
+  const lower = needle.toLowerCase();
+  let from = 0;
+  for (;;) {
+    const at = haystack.indexOf(lower, from);
+    if (at === -1) {
+      break;
+    }
+    if (at > from) {
+      pieces.push({ text: text.slice(from, at), hit: false });
+    }
+    pieces.push({ text: text.slice(at, at + needle.length), hit: true });
+    from = at + needle.length;
+  }
+  if (from < text.length) {
+    pieces.push({ text: text.slice(from), hit: false });
+  }
+  return pieces;
+}
+
+/** Step to another hit, wrapping round at either end. */
+function step(by: number): void {
+  if (hits.value.length === 0) {
+    return;
+  }
+  hit.value = (hit.value + by + hits.value.length) % hits.value.length;
+  void reveal();
+}
+
+/**
+ * Bring the hit that is stood on into view.
+ *
+ * Only the dialogue moves: a search is reading, and the media plays on
+ * wherever it was — a line is heard when it is clicked, not when it is found.
+ */
+async function reveal(): Promise<void> {
+  await nextTick();
+  dialogueBox.value
+    ?.querySelector(`[data-line="${found.value}"]`)
+    ?.scrollIntoView({ block: "center" });
+}
+
+// Another word is another search: it starts at the first line holding it.
+watch(query, () => {
+  hit.value = 0;
+  void reveal();
+});
+
+// Another recording, or another tab, and the box is somebody else's search.
+watch([() => selected.value?.id ?? null, tab], () => {
+  query.value = "";
+  hit.value = 0;
+});
 
 // ------------------------------------------------------------------- notes
 
@@ -950,12 +1066,70 @@ watch(
           </button>
         </div>
 
-        <div class="results" role="tabpanel">
+        <!-- Where the transcript came from, and the way through it. It sits
+             outside the part that scrolls rather than stuck to the top of it:
+             a header the dialogue cannot pass behind, whatever it is doing
+             underneath. -->
+        <div
+          v-if="tab === 'transcript' && transcript !== null && !loadingResults"
+          class="dialogue-head"
+        >
+          <p class="muted meta">
+            {{ transcript.language }} · {{ duration }} · {{ speakers }} ·
+            {{ transcript.provider }}/{{ transcript.model }}
+          </p>
+
+          <div v-if="transcript.utterances.length" class="find">
+            <input
+              v-model="query"
+              class="find__field"
+              type="search"
+              spellcheck="false"
+              aria-label="Search the transcript"
+              placeholder="Search the transcript…"
+              @keydown.enter.exact.prevent="step(1)"
+              @keydown.enter.shift.prevent="step(-1)"
+              @keydown.esc.prevent="query = ''"
+            />
+            <span class="muted find__tally">{{ tally }}</span>
+            <button
+              class="icon"
+              type="button"
+              title="Previous match"
+              aria-label="Previous match"
+              :disabled="!hits.length"
+              @click="step(-1)"
+            >
+              ↑
+            </button>
+            <button
+              class="icon"
+              type="button"
+              title="Next match"
+              aria-label="Next match"
+              :disabled="!hits.length"
+              @click="step(1)"
+            >
+              ↓
+            </button>
+          </div>
+        </div>
+
+        <div
+          class="results"
+          :class="{ 'results--chat': tab === 'ask' }"
+          role="tabpanel"
+        >
+          <!-- What can be asked about the recording rather than read off it.
+               It is drawn only while its tab is open, which is what ends the
+               conversation: nothing about one is stored anywhere. -->
+          <AskSentry v-if="tab === 'ask'" :key="selected.id" :recording="selected" />
+
           <!-- The one tab that is written rather than read: what somebody
                wants to remember, and what they want it kept next to. The
                whole panel takes a drop, so a screenshot has somewhere to
                land wherever it is released. -->
-          <template v-if="tab === 'notes'">
+          <template v-else-if="tab === 'notes'">
             <div
               class="notes"
               :class="{ 'notes--drop': dropping }"
@@ -1076,18 +1250,16 @@ watch(
 
           <template v-else>
             <template v-if="transcript !== null">
-              <p class="muted note note--first">
-                {{ transcript.language }} · {{ duration }} · {{ speakers }} ·
-                {{ transcript.provider }}/{{ transcript.model }}
-              </p>
-              <div class="dialogue">
+              <div ref="dialogueBox" class="dialogue">
                 <p
                   v-for="(utterance, index) in transcript.utterances"
                   :key="index"
                   class="utterance"
+                  :data-line="index"
                   :class="{
                     'utterance--seekable': media !== null,
                     'utterance--active': index === activeUtterance,
+                    'utterance--found': index === found,
                   }"
                   :role="media === null ? undefined : 'button'"
                   :tabindex="media === null ? undefined : 0"
@@ -1097,7 +1269,15 @@ watch(
                 >
                   <span class="mono time">{{ timestamp(utterance.start) }}</span>
                   <span class="speaker">{{ utterance.label }}</span>
-                  <span>{{ utterance.text }}</span>
+                  <span>
+                    <template
+                      v-for="(piece, at) in marked(utterance.text)"
+                      :key="at"
+                    >
+                      <mark v-if="piece.hit" class="hit">{{ piece.text }}</mark>
+                      <template v-else>{{ piece.text }}</template>
+                    </template>
+                  </span>
                 </p>
                 <p v-if="!transcript.utterances.length" class="muted">
                   Nothing was recognised in the audio.
@@ -1385,6 +1565,69 @@ watch(
   padding: 1.5rem;
 }
 
+/* The chat owns its own scrolling: the thread inside it moves, the composer
+   and the switches around it stay where they are. */
+.results--chat {
+  overflow: hidden;
+}
+
+/* The header of the transcript: what it came from, and the way through it.
+   It is a band of the pane and not of the dialogue, so it is drawn once,
+   above everything that moves, and nothing ever runs under it. */
+.dialogue-head {
+  flex: none;
+  padding: 0.55rem 1.5rem 0.7rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.meta {
+  margin: 0 0 0.5rem;
+  font-size: 0.8rem;
+}
+
+.find {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.find__field {
+  flex: 1;
+  min-width: 0;
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.85rem;
+}
+
+.find__field:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.find__tally {
+  flex: none;
+  min-width: 4.5rem;
+  font-size: 0.78rem;
+  text-align: right;
+}
+
+/* Every hit is marked where it stands; the line stood on is marked around. */
+.hit {
+  border-radius: 3px;
+  background: var(--accent-soft);
+  color: inherit;
+}
+
+.utterance--found .hit {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
 /* The note: an editor that takes the room the dialogue would have had, and
    what is stored with it underneath. */
 .notes {
@@ -1535,11 +1778,6 @@ watch(
   font-size: 0.8rem;
 }
 
-/* The line that says where the transcript came from sits above it. */
-.note--first {
-  margin-top: 0;
-  margin-bottom: 0.5rem;
-}
 
 .utterance {
   display: grid;
@@ -1563,6 +1801,11 @@ watch(
 .utterance--active,
 .utterance--active:hover {
   background: var(--accent-soft);
+}
+
+/* The line the search stands on, told apart from the one being spoken. */
+.utterance--found {
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 
 .utterance--active .time,
