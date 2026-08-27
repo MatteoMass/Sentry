@@ -13,56 +13,46 @@
  * single turn. That last one is therefore off, and turning it on is a
  * question of its own.
  *
- * Nothing is stored, here or on the backend. The conversation lives in this
- * component and travels whole with every question, so leaving the tab is what
- * ends it — which is the honest behaviour for something nobody is paying to
- * keep.
+ * Nothing is stored, here or on the backend, but the conversation outlives
+ * this component: it is held by `useChat`, so reading the line an answer
+ * quoted and coming back does not end it. Opening another recording does,
+ * and so does clearing it, and so does a reload.
+ *
+ * Two things carry a conversation out of the tab, both of them asked for.
+ * An answer points at the moments it was drawn from, and a moment clicked
+ * is the transcript scrolled to that line — the panel around this one is
+ * what does that, since the dialogue is drawn there. And a conversation
+ * worth keeping goes into the note of the recording, which is the only
+ * place anything here is ever stored: it lands in the editor, where it is
+ * saved by the same button that saves everything else written there.
  *
  * What Sentry answers under is not edited here. The prompt is one of the
  * three the settings dialog holds, and it belongs with them: it steers every
  * conversation about every recording, and a switch that wide does not live
  * inside one of them.
  */
-import { computed, nextTick, ref, watch } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 
-import { ApiError, askSentry } from "@/api/client";
-import type { ChatContext, ChatRole, Recording } from "@/api/types";
+import type { ChatContext, Recording } from "@/api/types";
 import Markdown from "@/components/Markdown.vue";
+import { useChat } from "@/composables/useChat";
 import { useConfirm } from "@/composables/useConfirm";
 
 const props = defineProps<{ recording: Recording }>();
 
+const emit = defineEmits<{
+  /** A moment of the recording somebody asked to be shown. */
+  seek: [seconds: number];
+  /** The conversation, written out to be kept with the recording. */
+  keep: [conversation: string];
+}>();
+
 const { ask } = useConfirm();
-
-/**
- * One turn on screen.
- *
- * An answer carries what it was written by and what it was billed, which the
- * turn it belongs to is the only sensible place to say.
- */
-interface Turn {
-  role: ChatRole;
-  content: string;
-  model?: string;
-  tokens?: number;
-}
-
-const turns = ref<Turn[]>([]);
-const draft = ref("");
-const sending = ref(false);
-const error = ref<string | null>(null);
+const { turns, draft, context, sending, error, clear, carry, ask: send } =
+  useChat();
 
 /** Where the conversation is drawn, so a new turn can be scrolled to. */
 const thread = ref<HTMLElement | null>(null);
-
-/**
- * What travels with a question.
- *
- * The first two are on because they are what makes an answer worth reading
- * and cost a fraction of what the audio costs; the third is off until
- * somebody says otherwise, and is asked about before it goes on.
- */
-const context = ref<ChatContext>({ transcript: true, summary: true, source: false });
 
 /** What each switch can actually send, which is what is stored on disk. */
 const available = computed(() => ({
@@ -122,60 +112,28 @@ const spent = computed(() =>
   turns.value.reduce((total, turn) => total + (turn.tokens ?? 0), 0),
 );
 
-/**
- * Ask what is in the composer.
- *
- * The question joins the conversation before it is answered, so it reads the
- * way it was typed while the model is thinking. A call that fails takes it
- * back out and puts it in the composer again: a conversation must not hold a
- * question nothing ever answered, and what was typed is worth more than the
- * failure that lost it.
- */
-async function send(): Promise<void> {
-  const question = draft.value.trim();
-  if (question === "" || sending.value) {
-    return;
-  }
-
-  const recordingId = props.recording.id;
-  turns.value = [...turns.value, { role: "user", content: question }];
-  draft.value = "";
-  sending.value = true;
-  error.value = null;
-
-  try {
-    const reply = await askSentry(recordingId, {
-      messages: turns.value.map(({ role, content }) => ({ role, content })),
-      ...carried.value,
-    });
-    if (props.recording.id !== recordingId) {
-      return;
-    }
-    turns.value = [
-      ...turns.value,
-      {
-        role: "assistant",
-        content: reply.text,
-        model: reply.model,
-        tokens: reply.input_tokens + reply.output_tokens,
-      },
-    ];
-  } catch (cause) {
-    if (props.recording.id !== recordingId) {
-      return;
-    }
-    turns.value = turns.value.slice(0, -1);
-    draft.value = question;
-    error.value = message(cause);
-  } finally {
-    sending.value = false;
-  }
+/** Ask what is in the composer, with what was chosen to send behind it. */
+async function submit(): Promise<void> {
+  await send(props.recording, carried.value);
 }
 
-/** Throw the conversation away. Nothing was stored, so nothing is lost. */
-function clear(): void {
-  turns.value = [];
-  error.value = null;
+/**
+ * Write the conversation out as the note it is to be added to.
+ *
+ * A note is read as plain text in a textarea, so the turns are marked by who
+ * took them rather than by anything Markdown would have to render, and the
+ * whole thing is stamped: a conversation is about a recording, but it also
+ * happened on a day, and the second one is the part nothing else records.
+ */
+function keep(): void {
+  const when = new Date().toLocaleString(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+  const said = turns.value.map(
+    (turn) => `${turn.role === "user" ? "Q" : "A"}: ${turn.content.trim()}`,
+  );
+  emit("keep", [`Ask Sentry · ${when}`, ...said].join("\n\n"));
 }
 
 /**
@@ -190,7 +148,7 @@ async function toggle(
   box: EventTarget | null,
 ): Promise<void> {
   if (id !== "source" || !wanted) {
-    context.value = { ...context.value, [id]: wanted };
+    carry(id, wanted);
     return;
   }
 
@@ -204,24 +162,22 @@ async function toggle(
     confirm: "Send it anyway",
     danger: true,
   });
-  context.value = { ...context.value, source: agreed };
+  carry("source", agreed);
   if (!agreed && box instanceof HTMLInputElement) {
     box.checked = false;
   }
 }
 
-function message(cause: unknown): string {
-  return cause instanceof ApiError ? cause.message : String(cause);
+/** Put the last turn on screen, wherever the thread was left. */
+async function follow(): Promise<void> {
+  await nextTick();
+  thread.value?.lastElementChild?.scrollIntoView({ block: "end" });
 }
 
-// A turn arriving is a turn worth seeing: the thread follows it down.
-watch(
-  () => turns.value.length,
-  async () => {
-    await nextTick();
-    thread.value?.lastElementChild?.scrollIntoView({ block: "end" });
-  },
-);
+// A turn arriving is a turn worth seeing, and so is the conversation that was
+// already going when the tab was opened again.
+watch(() => turns.value.length, follow);
+onMounted(follow);
 </script>
 
 <template>
@@ -251,6 +207,19 @@ watch(
         </label>
       </div>
 
+      <!-- The two things that can become of a conversation: kept with the
+           recording, or thrown away. Neither is offered while there is
+           nothing to keep or throw. -->
+      <button
+        class="icon"
+        type="button"
+        title="Put this conversation in the note of the recording, to be saved there"
+        :disabled="!turns.length || sending"
+        @click="keep"
+      >
+        ✎ Add to note
+      </button>
+
       <button
         class="icon"
         type="button"
@@ -265,8 +234,10 @@ watch(
     <div ref="thread" class="thread">
       <p v-if="!turns.length" class="muted empty">
         Ask anything about this recording — what was decided, who promised
-        what, whether a name came up. Nothing here is stored: leaving this tab
-        ends the conversation.
+        what, whether a name came up. An answer points at the moments it was
+        drawn from, and a moment clicked opens the transcript there. Nothing
+        is stored unless the conversation is saved as a note; opening another
+        recording ends it.
       </p>
 
       <div
@@ -277,7 +248,12 @@ watch(
       >
         <!-- A question is drawn as it was typed; an answer comes back in the
              Markdown a model writes prose in, and is read as that. -->
-        <Markdown v-if="turn.role === 'assistant'" :text="turn.content" />
+        <Markdown
+          v-if="turn.role === 'assistant'"
+          :text="turn.content"
+          :seekable="recording.has_transcript"
+          @seek="emit('seek', $event)"
+        />
         <p v-else class="turn__text">{{ turn.content }}</p>
         <p v-if="turn.model" class="muted turn__meta">
           {{ turn.model }} · {{ turn.tokens }} tokens
@@ -293,7 +269,7 @@ watch(
       should read before asking.
     </p>
 
-    <form class="composer" @submit.prevent="send">
+    <form class="composer" @submit.prevent="submit">
       <textarea
         v-model="draft"
         class="composer__field"
@@ -301,7 +277,7 @@ watch(
         :disabled="sending"
         aria-label="Question about this recording"
         placeholder="Ask Sentry about this recording…"
-        @keydown.enter.exact.prevent="send"
+        @keydown.enter.exact.prevent="submit"
       ></textarea>
       <div class="composer__foot">
         <span class="muted composer__state">
@@ -336,6 +312,7 @@ watch(
 .chat__head {
   display: flex;
   flex: none;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.4rem;
 }

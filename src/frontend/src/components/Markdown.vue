@@ -6,12 +6,23 @@
  * `v-html`: the text comes from a model reading somebody's recording, and
  * that is not a place page markup may come from. What the parser could not
  * read stays on screen as the characters it was written as.
+ *
+ * A timestamp is the one run that does something when it is clicked, and
+ * only where the caller says there is somewhere to go: the answer names a
+ * moment of the recording, and whoever drew the answer is the one who knows
+ * whether the transcript it points into is there to be shown.
  */
 import { computed } from "vue";
 
 import { blocks } from "@/components/markdown";
 
-const props = defineProps<{ text: string }>();
+const props = defineProps<{
+  text: string;
+  /** True when a timestamp in the text is worth clicking. */
+  seekable?: boolean;
+}>();
+
+const emit = defineEmits<{ seek: [seconds: number] }>();
 
 const parsed = computed(() => blocks(props.text));
 </script>
@@ -37,6 +48,13 @@ const parsed = computed(() => blocks(props.text));
               rel="noopener noreferrer"
               >{{ piece.text }}</a
             >
+            <button
+              v-else-if="piece.kind === 'time' && seekable"
+              class="md-time"
+              type="button"
+              title="Show this moment in the transcript"
+              @click="emit('seek', piece.seconds)"
+            >{{ piece.text }}</button>
             <strong v-else-if="piece.kind === 'strong'">{{ piece.text }}</strong>
             <em v-else-if="piece.kind === 'emphasis'">{{ piece.text }}</em>
             <code v-else-if="piece.kind === 'code'" class="md-tick">{{ piece.text }}</code>
@@ -54,6 +72,13 @@ const parsed = computed(() => blocks(props.text));
             rel="noopener noreferrer"
             >{{ piece.text }}</a
           >
+          <button
+            v-else-if="piece.kind === 'time' && seekable"
+            class="md-time"
+            type="button"
+            title="Show this moment in the transcript"
+            @click="emit('seek', piece.seconds)"
+          >{{ piece.text }}</button>
           <strong v-else-if="piece.kind === 'strong'">{{ piece.text }}</strong>
           <em v-else-if="piece.kind === 'emphasis'">{{ piece.text }}</em>
           <code v-else-if="piece.kind === 'code'" class="md-tick">{{ piece.text }}</code>
@@ -138,5 +163,23 @@ blockquote.md-block {
 
 .markdown a {
   color: var(--accent);
+}
+
+/* A moment of the recording: drawn as the characters it was written as, and
+   underlined because it goes somewhere when it is clicked. */
+.md-time {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.85em;
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+  cursor: pointer;
+}
+
+.md-time:hover {
+  opacity: 0.75;
 }
 </style>

@@ -24,6 +24,12 @@
  * question at a time and kept nowhere, and what somebody wants to remember
  * about it — written here and stored in the same folder, which is why it
  * survives a recording being processed again.
+ *
+ * The two meet in both directions. A moment named in an answer opens the
+ * dialogue at the line that was being spoken then, since the transcript is
+ * drawn here and not in the tab that pointed at it; and a conversation worth
+ * more than the tab it was held in is added to the note, which is the only
+ * place a chat is ever stored.
  */
 import { computed, nextTick, ref, watch } from "vue";
 
@@ -341,9 +347,11 @@ const pictureless = ref(false);
  * A seek asked for before the length is known is dropped by the browser, and
  * the same is true of the player that replaces this one when the picture
  * turns out not to exist — so the moment is remembered here rather than on
- * an element that may not be the one that ends up playing.
+ * an element that may not be the one that ends up playing. What was asked
+ * for travels with it: a line clicked is asking to hear it, a timestamp in
+ * an answer is asking to see where it is.
  */
-const resumeAt = ref<number | null>(null);
+const resumeAt = ref<{ at: number; play: boolean } | null>(null);
 
 /**
  * What there is to play, or `null` when the folder holds no media.
@@ -364,23 +372,28 @@ const media = computed(() => {
 });
 
 /**
- * Play from `seconds`, which is what clicking a line of the dialogue means.
+ * Move to `seconds`, and start playing there unless told not to.
+ *
+ * Clicking a line of the dialogue means playing it; being sent to a moment
+ * from somewhere else in the panel only means standing at it, so that the
+ * play button starts where the answer pointed rather than where the media
+ * was left.
  *
  * Nothing but the metadata is loaded until this is asked for; when even that
  * has not arrived the moment is put aside and taken up by whichever player
  * loads it.
  */
-function playFrom(seconds: number): void {
+function playFrom(seconds: number, play = true): void {
   const element = player.value;
   if (element === null) {
     return;
   }
   if (element.readyState === HTMLMediaElement.HAVE_NOTHING) {
-    resumeAt.value = seconds;
+    resumeAt.value = { at: seconds, play };
     element.load();
     return;
   }
-  resume(element, seconds);
+  resume(element, seconds, play);
 }
 
 /**
@@ -397,14 +410,17 @@ function onLoadedMetadata(event: Event): void {
     return;
   }
   if (resumeAt.value !== null) {
-    resume(element, resumeAt.value);
+    resume(element, resumeAt.value.at, resumeAt.value.play);
     resumeAt.value = null;
   }
 }
 
-function resume(element: HTMLMediaElement, seconds: number): void {
+function resume(element: HTMLMediaElement, seconds: number, play: boolean): void {
   element.currentTime = seconds;
   playhead.value = seconds;
+  if (!play) {
+    return;
+  }
   // A browser may refuse to start on its own; the jump is what was asked
   // for, and it has already happened.
   void element.play().catch(() => undefined);
@@ -615,6 +631,59 @@ watch([() => selected.value?.id ?? null, tab], () => {
   hit.value = 0;
 });
 
+// ------------------------------------------- the moment an answer points at
+
+/**
+ * The line a chat answer sent the panel to, or -1 when none did.
+ *
+ * An answer about a recording names the moments it was drawn from, and a
+ * moment is only worth naming if it can be checked: clicking one opens the
+ * dialogue at the line that was being spoken then, marked so it can be found
+ * again after the eye has left it. It stays marked until another one is
+ * asked for, or until the recording changes under it.
+ */
+const pinned = ref(-1);
+
+/** The line being spoken at `seconds`, or -1 when the dialogue is empty. */
+function lineAt(seconds: number): number {
+  const utterances = transcript.value?.utterances ?? [];
+  let found = -1;
+  for (const [index, utterance] of utterances.entries()) {
+    if (utterance.start > seconds) {
+      break;
+    }
+    found = index;
+  }
+  return found;
+}
+
+/**
+ * Show the moment of the recording an answer pointed at.
+ *
+ * The media is moved there but is not started: this is asked for while
+ * reading an answer, and an hour of talk beginning out loud is not what a
+ * click on a timestamp was asking for. Whatever was already playing keeps
+ * playing, from the moment that was named.
+ */
+async function goTo(seconds: number): Promise<void> {
+  tab.value = "transcript";
+  playFrom(seconds, playing.value);
+  pinned.value = lineAt(seconds);
+  await nextTick();
+  dialogueBox.value
+    ?.querySelector(`[data-line="${pinned.value}"]`)
+    ?.scrollIntoView({ block: "center" });
+}
+
+// Another recording is another dialogue: the mark belonged to the one that
+// just left the panel.
+watch(
+  () => selected.value?.id ?? null,
+  () => {
+    pinned.value = -1;
+  },
+);
+
 // ------------------------------------------------------------------- notes
 
 /**
@@ -630,6 +699,9 @@ const stranded = new Map<string, string>();
 /** The note as it is stored, and the same note as it is being typed. */
 const note = ref<Note | null>(null);
 const noteDraft = ref("");
+
+/** The editor itself, so what is added to it can be shown where it landed. */
+const noteField = ref<HTMLTextAreaElement | null>(null);
 const loadingNote = ref(false);
 const savingNote = ref(false);
 const attaching = ref(false);
@@ -731,6 +803,51 @@ async function storeNote(): Promise<void> {
     }
   } finally {
     savingNote.value = false;
+  }
+}
+
+/**
+ * Put a conversation held about the recording into its note.
+ *
+ * A chat is kept nowhere until somebody says it is worth keeping, and the
+ * note is where anything a person wants to remember about a recording
+ * already lives — so it is added there rather than given a store of its own,
+ * under the note that was already written and separated from it by a rule.
+ *
+ * It is added to the editor and not to the disk. Everything else in the note
+ * is stored when the person who wrote it says so, and a conversation is the
+ * thing most likely to want trimming first: half of it is the questions that
+ * missed. The notes tab is opened on it with the cursor at the end of what
+ * arrived, and the Save button beneath is what stores it — as it stores
+ * everything else typed there.
+ */
+async function keepConversation(conversation: string): Promise<void> {
+  if (selected.value === null) {
+    return;
+  }
+
+  tab.value = "notes";
+  if (note.value === null) {
+    // Nothing is added to a note that could not be read: what is on screen
+    // is not known to be what is stored.
+    noteError.value =
+      "The note of this recording could not be read, so the conversation was" +
+      " not added to it.";
+    return;
+  }
+
+  const written = noteDraft.value.trimEnd();
+  noteDraft.value =
+    written === "" ? conversation : `${written}\n\n---\n\n${conversation}`;
+
+  // The editor is where the conversation now is, so it is where the cursor
+  // goes: what arrived is on screen, at the end, ready to be cut down.
+  await nextTick();
+  const editor = noteField.value;
+  if (editor !== null) {
+    editor.focus();
+    editor.setSelectionRange(noteDraft.value.length, noteDraft.value.length);
+    editor.scrollTop = editor.scrollHeight;
   }
 }
 
@@ -1121,9 +1238,17 @@ watch(
           role="tabpanel"
         >
           <!-- What can be asked about the recording rather than read off it.
-               It is drawn only while its tab is open, which is what ends the
-               conversation: nothing about one is stored anywhere. -->
-          <AskSentry v-if="tab === 'ask'" :key="selected.id" :recording="selected" />
+               The conversation is held outside the tab, so closing this one
+               to check a line does not end it; a moment named in an answer
+               opens the dialogue here, and a conversation worth keeping goes
+               into the note. -->
+          <AskSentry
+            v-if="tab === 'ask'"
+            :key="selected.id"
+            :recording="selected"
+            @seek="goTo"
+            @keep="keepConversation"
+          />
 
           <!-- The one tab that is written rather than read: what somebody
                wants to remember, and what they want it kept next to. The
@@ -1142,6 +1267,7 @@ watch(
 
               <template v-else>
                 <textarea
+                  ref="noteField"
                   v-model="noteDraft"
                   class="notes__editor"
                   spellcheck="false"
@@ -1259,7 +1385,7 @@ watch(
                   :class="{
                     'utterance--seekable': media !== null,
                     'utterance--active': index === activeUtterance,
-                    'utterance--found': index === found,
+                    'utterance--found': index === found || index === pinned,
                   }"
                   :role="media === null ? undefined : 'button'"
                   :tabindex="media === null ? undefined : 0"

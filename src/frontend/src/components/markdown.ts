@@ -14,13 +14,17 @@
  *
  * What is supported is what an answer actually uses: headings, paragraphs,
  * bullet and numbered lists, quotations, fenced code, rules, and inline
- * bold, italic, code and links. Anything else survives as the text it was
- * written as, which is the right failure for a parser this small.
+ * bold, italic, code and links. Timestamps are read too, though they are no
+ * part of Markdown: an answer about a recording points at the moment it was
+ * drawn from, and a moment is worth being able to click. Anything else
+ * survives as the text it was written as, which is the right failure for a
+ * parser this small.
  */
 
 /** One run of inline text, and what it is drawn as. */
 export type Piece =
   | { kind: "text"; text: string }
+  | { kind: "time"; text: string; seconds: number }
   | { kind: "strong"; text: string }
   | { kind: "emphasis"; text: string }
   | { kind: "code"; text: string }
@@ -52,9 +56,14 @@ const NUMBERED = /^\s{0,3}\d+[.)]\s+(.*)$/;
  * A lone underscore is not a marker here. Emphasis written that way is rare
  * in an answer and `snake_case` is not, so reading one as the other would
  * cost more than it is worth.
+ *
+ * A clock comes last, after the link it could otherwise be mistaken for the
+ * opening of: an answer about a recording is asked to point at the moment it
+ * was drawn from, and `[00:12:34]` written as prose is a place in the audio
+ * before it is a piece of punctuation.
  */
 const INLINE =
-  /(`+)(.+?)\1|\*\*(\S(?:[\s\S]*?\S)?)\*\*|__(\S(?:[\s\S]*?\S)?)__|\*([^\s*](?:[^*]*[^\s*])?)\*|\[([^\]\n]+)\]\(([^)\s]+)\)/g;
+  /(`+)(.+?)\1|\*\*(\S(?:[\s\S]*?\S)?)\*\*|__(\S(?:[\s\S]*?\S)?)__|\*([^\s*](?:[^*]*[^\s*])?)\*|\[([^\]\n]+)\]\(([^)\s]+)\)|\[?\b(\d{1,3}:[0-5]\d(?::[0-5]\d)?)\b\]?/g;
 
 /** Schemes a link may carry; anything else is drawn as the text it is. */
 const SCHEMES = ["http:", "https:", "mailto:"];
@@ -189,7 +198,7 @@ export function inline(source: string): Piece[] {
 
 /** Turn one match of the inline grammar into the run it stands for. */
 function piece(found: RegExpExecArray): Piece {
-  const [, , code, strong, alsoStrong, emphasis, label, href] = found;
+  const [, , code, strong, alsoStrong, emphasis, label, href, clock] = found;
   if (code !== undefined) {
     return { kind: "code", text: code };
   }
@@ -199,7 +208,18 @@ function piece(found: RegExpExecArray): Piece {
   if (emphasis !== undefined) {
     return { kind: "emphasis", text: emphasis };
   }
+  if (clock !== undefined) {
+    return { kind: "time", text: found[0], seconds: moment(clock) };
+  }
   return safe(href) ? { kind: "link", text: label, href } : { kind: "text", text: label };
+}
+
+/** Read `mm:ss` or `hh:mm:ss` as the offset into the recording it names. */
+function moment(clock: string): number {
+  return clock
+    .split(":")
+    .map(Number)
+    .reduce((seconds, part) => seconds * 60 + part, 0);
 }
 
 /**
